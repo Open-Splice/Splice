@@ -1,2 +1,4 @@
-# Splice
-The Splice Programming Language
+# Welcome
+Welcome to Splice. Sinha's Brand new Open Source Programming Language
+
+Instructions are comming soon
