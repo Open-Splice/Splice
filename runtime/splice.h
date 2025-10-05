@@ -298,7 +298,7 @@ static inline ASTNode *get_func(const char *name) {
    Forward declarations (all static inline)
    ============================================================ */
 static inline void     add_token(const char *token);
-static inline void     lex(const char *src);
+static inline void     lex_from_bytecode(const char *src);
 static inline int      match(const char *token);
 static inline int      is_statement_start(const char *token);
 static inline ASTNode *parse_expression(void);
@@ -323,123 +323,84 @@ static inline void add_token(const char *token) {
     arr[i++] = strdup(token);
 }
 
-static inline void lex(const char *src) {
-    const char *p = src;
-    static char last_token[32] = "";
+#include "opcode.h"
 
-    while (*p) {
-        if (*p == '\n') { line++; p++; continue; }
-        if (isspace((unsigned char)*p)) { p++; continue; }
+static inline void lex_from_bytecode(const char *infile) {
+    FILE *bc_in=fopen(infile,"rb");
+    if(!bc_in){ perror("open infile"); exit(1); }
 
-        /* line comment //... */
-        if (*p == '/' && *(p+1) == '/') {
-            while (*p && *p != '\n') p++;
-            continue;
-        }
+    int c;
+    while((c=fgetc(bc_in))!=EOF){
+        switch(c){
+            case OP_LET: add_token("LET"); break;
+            case OP_PRINT: add_token("PRINT"); break;
+            case OP_RAISE: add_token("RAISE"); break;
+            case OP_WARN: add_token("WARN"); break;
+            case OP_INFO: add_token("INFO"); break;
+            case OP_WHILE: add_token("WHILE"); break;
+            case OP_IF: add_token("IF"); break;
+            case OP_ELSE: add_token("ELSE"); break;
+            case OP_FUNC: add_token("FUNC"); break;
+            case OP_RETURN: add_token("RETURN"); break;
+            case OP_IMPORT: add_token("IMPORT"); break;
+            case OP_FOR: add_token("FOR"); break;
+            case OP_IN: add_token("IN"); break;
+            case OP_TRUE: add_token("TRUE"); break;
+            case OP_FALSE: add_token("FALSE"); break;
+            case OP_AND: add_token("AND"); break;
+            case OP_OR: add_token("OR"); break;
+            case OP_NOT: add_token("NOT"); break;
 
-        /* compound operators */
-        if (*p == '=' && *(p+1) == '=') { add_token("EQ");  strcpy(last_token,"EQ");  p+=2; continue; }
-        if (*p == '!' && *(p+1) == '=') { add_token("NEQ"); strcpy(last_token,"NEQ"); p+=2; continue; }
-        if (*p == '<' && *(p+1) == '=') { add_token("LE");  strcpy(last_token,"LE");  p+=2; continue; }
-        if (*p == '>' && *(p+1) == '=') { add_token("GE");  strcpy(last_token,"GE");  p+=2; continue; }
+            case OP_ASSIGN: add_token("ASSIGN"); break;
+            case OP_PLUS: add_token("PLUS"); break;
+            case OP_MINUS: add_token("MINUS"); break;
+            case OP_MULTIPLY: add_token("MULTIPLY"); break;
+            case OP_DIVIDE: add_token("DIVIDE"); break;
+            case OP_LT: add_token("LT"); break;
+            case OP_GT: add_token("GT"); break;
+            case OP_LE: add_token("LE"); break;
+            case OP_GE: add_token("GE"); break;
+            case OP_EQ: add_token("EQ"); break;
+            case OP_NEQ: add_token("NEQ"); break;
 
-        /* single char tokens */
-        if (*p == ';') { add_token("SEMICOLON"); strcpy(last_token,"SEMICOLON"); p++; continue; }
-        if (*p == '=') { add_token("ASSIGN");    strcpy(last_token,"ASSIGN");    p++; continue; }
-        if (*p == '(') { add_token("LPAREN");    strcpy(last_token,"LPAREN");    p++; continue; }
-        if (*p == ')') { add_token("RPAREN");    strcpy(last_token,"RPAREN");    p++; continue; }
-        if (*p == '{') { add_token("LBRACE");    strcpy(last_token,"LBRACE");    p++; continue; }
-        if (*p == '}') { add_token("RBRACE");    strcpy(last_token,"RBRACE");    p++; continue; }
-        if (*p == '+') { add_token("PLUS");      strcpy(last_token,"PLUS");      p++; continue; }
-        if (*p == '-') { add_token("MINUS");     strcpy(last_token,"MINUS");     p++; continue; }
-        if (*p == '*') { add_token("MULTIPLY");  strcpy(last_token,"MULTIPLY");  p++; continue; }
-        if (*p == '/') { add_token("DIVIDE");    strcpy(last_token,"DIVIDE");    p++; continue; }
-        if (*p == '<') { add_token("LT");        strcpy(last_token,"LT");        p++; continue; }
-        if (*p == '>') { add_token("GT");        strcpy(last_token,"GT");        p++; continue; }
-        if (*p == ',') { add_token("COMMA");     strcpy(last_token,"COMMA");     p++; continue; }
-        if (*p == '[') { add_token("LBRACKET"); strcpy(last_token,"LBRACKET"); p++; continue; }
-        if (*p == ']') { add_token("RBRACKET"); strcpy(last_token,"RBRACKET"); p++; continue; }
-        if (*p == '.') { add_token("DOT");       strcpy(last_token,"DOT");       p++; continue; }
+            case OP_SEMICOLON: add_token("SEMICOLON"); break;
+            case OP_COMMA: add_token("COMMA"); break;
+            case OP_DOT: add_token("DOT"); break;
 
-        /* string literal */
-        if (*p == '"') {
-            const char *start = ++p;
-            while (*p && *p != '"') p++;
-            if (*p != '"') error(line, "Unterminated string literal");
-            size_t len = (size_t)(p - start);
-            char *buf = (char*)malloc(len + 1);
-            memcpy(buf, start, len);
-            buf[len] = '\0';
+            case OP_LPAREN: add_token("LPAREN"); break;
+            case OP_RPAREN: add_token("RPAREN"); break;
+            case OP_LBRACE: add_token("LBRACE"); break;
+            case OP_RBRACE: add_token("RBRACE"); break;
+            case OP_LBRACKET: add_token("LBRACKET"); break;
+            case OP_RBRACKET: add_token("RBRACKET"); break;
 
-            char *tok = (char*)malloc(len + 32);
-            if (strcmp(last_token, "IMPORT") == 0) {
-                snprintf(tok, len + 32, "IMSTRING \"%s\"", buf);
-                add_token(tok); strcpy(last_token, "IMSTRING");
-            } else {
-                snprintf(tok, len + 32, "STRING \"%s\"", buf);
-                add_token(tok); strcpy(last_token, "STRING");
+            case OP_NUMBER: {
+                unsigned short len; fread(&len,2,1,bc_in);
+                char buf[256]; fread(buf,1,len,bc_in); buf[len]=0;
+                char tok[300]; snprintf(tok,sizeof(tok),"NUMBER %s",buf);
+                add_token(tok); break;
             }
-            free(buf);
-            free(tok);
-            p++; /* consume closing " */
-            continue;
-        }
-
-        /* number literal */
-        if (isdigit((unsigned char)*p)) {
-            const char *start = p;
-            while (isdigit((unsigned char)*p)) p++;
-            if (*p == '.') { p++; while (isdigit((unsigned char)*p)) p++; }
-            size_t len = (size_t)(p - start);
-            char *buf = (char*)malloc(len + 1);
-            memcpy(buf, start, len); buf[len] = '\0';
-            char *tok = (char*)malloc(len + 16);
-            snprintf(tok, len + 16, "NUMBER %s", buf);
-            add_token(tok);
-            free(buf); free(tok);
-            continue;
-        }
-
-        /* identifier/keyword */
-        if (isalpha((unsigned char)*p) || *p == '_') {
-            const char *start = p;
-            while (isalnum((unsigned char)*p) || *p == '_') p++;
-            size_t len = (size_t)(p - start);
-            char *buf = (char*)malloc(len + 1);
-            memcpy(buf, start, len); buf[len] = '\0';
-
-            if (strcmp(buf, "let") == 0)      { add_token("LET");    strcpy(last_token,"LET"); }
-            else if (strcmp(buf, "print") == 0){ add_token("PRINT"); strcpy(last_token,"PRINT"); }
-            else if (strcmp(buf, "raise") == 0){ add_token("RAISE"); strcpy(last_token,"RAISE"); }
-            else if (strcmp(buf, "warn") == 0) { add_token("WARN");  strcpy(last_token,"WARN"); }
-            else if (strcmp(buf, "info") == 0) { add_token("INFO");  strcpy(last_token,"INFO"); } /* fixed */
-            else if (strcmp(buf, "while") == 0){ add_token("WHILE"); strcpy(last_token,"WHILE"); }
-            else if (strcmp(buf, "if") == 0)   { add_token("IF");    strcpy(last_token,"IF"); }
-            else if (strcmp(buf, "else") == 0) { add_token("ELSE");  strcpy(last_token,"ELSE"); }
-            else if (strcmp(buf, "true") == 0) { add_token("TRUE");  strcpy(last_token,"TRUE"); }
-            else if (strcmp(buf, "false") == 0){ add_token("FALSE"); strcpy(last_token,"FALSE"); }
-            else if (strcmp(buf, "and") == 0)  { add_token("AND");   strcpy(last_token,"AND"); }
-            else if (strcmp(buf, "or") == 0)   { add_token("OR");    strcpy(last_token,"OR"); }
-            else if (strcmp(buf, "not") == 0)  { add_token("NOT");   strcpy(last_token,"NOT"); }
-            else if (strcmp(buf, "func") == 0) { add_token("FUNC");  strcpy(last_token,"FUNC"); }
-            else if (strcmp(buf, "return") == 0){ add_token("RETURN"); strcpy(last_token,"RETURN"); }
-            else if (strcmp(buf, "import") == 0){ add_token("IMPORT"); strcpy(last_token,"IMPORT"); }
-            else if (strcmp(buf, "for") == 0)   { add_token("FOR");    strcpy(last_token,"FOR"); }
-            else if (strcmp(buf, "in") == 0)    { add_token("IN");     strcpy(last_token,"IN"); }
-            else {
-                char *tok = (char*)malloc(len + 20);
-                snprintf(tok, len + 20, "IDENTIFIER %s", buf);
-                add_token(tok);
-                strcpy(last_token,"IDENTIFIER");
-                free(tok);
+            case OP_STRING: {
+                unsigned short len; fread(&len,2,1,bc_in);
+                char buf[256]; fread(buf,1,len,bc_in); buf[len]=0;
+                char tok[300]; snprintf(tok,sizeof(tok),"STRING \"%s\"",buf);
+                add_token(tok); break;
             }
-            free(buf);
-            continue;
+            case OP_IDENTIFIER: {
+                unsigned short len; fread(&len,2,1,bc_in);
+                char buf[256]; fread(buf,1,len,bc_in); buf[len]=0;
+                char tok[300]; snprintf(tok,sizeof(tok),"IDENTIFIER %s",buf);
+                add_token(tok); break;
+            }
+            case OP_IMSTRING: {
+                unsigned short len; fread(&len,2,1,bc_in);
+                char buf[256]; fread(buf,1,len,bc_in); buf[len]=0;
+                char tok[300]; snprintf(tok,sizeof(tok),"IMSTRING \"%s\"",buf);
+                add_token(tok); break;
+            }
         }
-
-        error(line, "Unknown character '%c'", *p);
-        p++;
     }
+    fclose(bc_in);
 }
 
 /* ============================================================
@@ -1509,7 +1470,7 @@ static inline void handle_import(const char *filename) {
     fclose(file);
 
     int old_i = i, old_current = current, old_line = line;
-    lex(code);
+    lex_from_bytecode(code);
     free(code);
 
     int import_start = old_i, import_end = i;

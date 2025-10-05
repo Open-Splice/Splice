@@ -4,8 +4,9 @@
 #include <unistd.h>
 #include "splice.h"
 
-static char *read_file_or_null(const char *path) {
-    FILE *f = fopen(path, "r");
+// helper to read file fully
+static char *read_file_or_null(const char *path, long *out_len) {
+    FILE *f = fopen(path, "rb"); // binary, since .spbc is not text
     if (!f) return NULL;
     fseek(f, 0, SEEK_END);
     long len = ftell(f);
@@ -13,14 +14,15 @@ static char *read_file_or_null(const char *path) {
     char *buf = (char*)malloc((size_t)len + 1);
     if (!buf) { fclose(f); return NULL; }
     fread(buf, 1, (size_t)len, f);
-    buf[len] = '\0';
+    buf[len] = '\0'; // not strictly needed for binary
     fclose(f);
+    if (out_len) *out_len = len;
     return buf;
 }
 
 int main(int argc, char **argv) {
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s <source_code|file.Splice>\n", argv[0]);
+        fprintf(stderr, "Usage: %s <file.spbc | file.Splice>\n", argv[0]);
         return 1;
     }
 
@@ -30,30 +32,40 @@ int main(int argc, char **argv) {
         return 0;
     }
 
-    char *owned_src = NULL;
-    const char *src = NULL;
-    if (arg && access(arg, R_OK) == 0) {
-        owned_src = read_file_or_null(arg);
-        if (!owned_src) { error(0, "Could not read file: %s", arg); return 1; }
-        src = owned_src;
-    } else {
-        src = arg;
+    long file_len = 0;
+    char *file_data = read_file_or_null(arg, &file_len);
+    if (!file_data) {
+        fprintf(stderr, "Could not read file: %s\n", arg);
+        return 1;
     }
-    if (!src || !*src) { if (owned_src) free(owned_src); error(0, "No source code provided"); return 1; }
 
-    /* reset global token stream */
+    // reset globals
     for (int t = 0; t < i; ++t) { free(arr[t]); arr[t] = NULL; }
     i = 0; current = 0; line = 1;
 
-    lex(src);
-    if (i == 0) { error(0, "No tokens generated"); return 1; }
+    // detect file type by extension
+    const char *ext = strrchr(arg, '.');
+    if (ext && strcmp(ext, ".spbc") == 0) {
+        // bytecode file → reverse lexer
+        lex_from_bytecode(arg);
+    } else {
+        fprintf(stderr, "[ERROR] No tokens generated\n");
+        free(file_data);
+        return 1;
+    }
 
     ASTNode *root = parse_statements();
-    if (!root) { error(0, "Failed to parse source"); return 1; }
+    if (!root) {
+        fprintf(stderr, "[ERROR] Failed to parse source\n");
+        free(file_data);
+        return 1;
+    }
 
     interpret(root);
     free_ast(root);
+
     success(0, "Code ran successfully");
-    if (owned_src) free(owned_src);
+
+    free(file_data);
     return 0;
 }

@@ -21,7 +21,10 @@ gcc -Iruntime -Wall -Wextra -c runtime/module_stubs.c -o module_stubs.o
 
 # Link executable (local binary: Splice)
 gcc Splice.o module_stubs.o -o Splice
-
+# Build messages
+echo "Building spbuild (bytecode compiler)..."
+gcc -Iruntime -Wall -Wextra runtime/build.c -o spbuild
+sudo cp spbuild /usr/local/bin/spbuild
 # Compute checksums (use shasum which exists on macOS; fallback when not present)
 NEWSUM=""
 OLDSUM=""
@@ -31,21 +34,21 @@ if command -v shasum >/dev/null 2>&1; then
         OLDSUM=$(shasum -a 256 /usr/local/bin/Splice | awk '{print $1}') || true
     fi
 elif command -v sha256sum >/dev/null 2>&1; then
-    NEWSUM=$(sha256sum Splice] | awk '{print $1}')
-    if [ -f /usr/local/bin/Splice] ]; then
-        OLDSUM=$(sha256sum /usr/local/bin/Splice] | awk '{print $1}') || true
+        NEWSUM=$(sha256sum Splice | awk '{print $1}')
+        if [ -f /usr/local/bin/Splice ]; then
+            OLDSUM=$(sha256sum /usr/local/bin/Splice | awk '{print $1}') || true
     fi
 fi
 
 if [[ $FORCE -eq 0 && -n "$OLDSUM" && "$NEWSUM" == "$OLDSUM" ]]; then
-    echo "/usr/local/bin/Splice] is already the current build (checksums match). Skipping install."
+    echo "/usr/local/bin/Splice is already the current build (checksums match). Skipping install."
 else
-    echo "Installing Splice] to /usr/local/bin (requires sudo)..."
-    sudo cp Splice] /usr/local/bin/Splice]
+    echo "Installing Splice to /usr/local/bin (requires sudo)..."
+    sudo cp Splice /usr/local/bin/Splice
     echo "Build and install complete."
 fi
 
 # Clean up object files
-rm -f Splice].o module_stubs.o
+rm -f Splice.o module_stubs.o
 
-echo "Splice] build script finished."
+echo "Splice build script finished."
