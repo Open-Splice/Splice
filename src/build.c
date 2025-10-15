@@ -46,6 +46,11 @@ void build_bytecode(const char *src, const char *outfile) {
         if (!strncmp(p,"!=",2)) { bc_write_byte(OP_NEQ); p+=2; continue; }
         if (!strncmp(p,"<=",2)) { bc_write_byte(OP_LE); p+=2; continue; }
         if (!strncmp(p,">=",2)) { bc_write_byte(OP_GE); p+=2; continue; }
+    if (!strncmp(p,"&&",2)) { bc_write_byte(OP_AND); p+=2; continue; }
+    if (!strncmp(p,"||",2)) { bc_write_byte(OP_OR); p+=2; continue; }
+
+    // single '!' -> NOT
+    if (*p=='!') { bc_write_byte(OP_NOT); p++; continue; }
 
         // --- Single-char ops ---
         if (*p=='='){ bc_write_byte(OP_ASSIGN); p++; continue; }

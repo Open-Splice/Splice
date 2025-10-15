@@ -843,20 +843,102 @@ static inline ASTNode *parse_statement(void) {
 
         ASTNode *else_body = NULL;
         if (current < i && strcmp(arr[current], "ELSE") == 0) {
-            current++;
-            if (!match("LBRACE")) error(line, "Expected '{' after else");
-            ASTNode **else_stmts = (ASTNode**)malloc(sizeof(ASTNode*) * (size_t)i);
-            int else_count = 0;
-            while (current < i && is_statement_start(arr[current])) {
-                ASTNode *s = parse_statement();
-                if (s) else_stmts[else_count++] = s;
-                if (current < i && strcmp(arr[current], "SEMICOLON") == 0) current++;
+            current++; /* consumed ELSE */
+
+            /* Support: else if (...) { ... } chains as nested AST_IF nodes.
+             * We build a chain of AST_IF nodes where each node's else_branch
+             * points to the next conditional (or final else block).
+             */
+            ASTNode *last_if = NULL;
+
+            /* If the token after ELSE is IF -> handle one or more `else if` blocks */
+            if (current < i && strcmp(arr[current], "IF") == 0) {
+                /* loop to capture successive `else if` blocks */
+                while (current < i && strcmp(arr[current], "IF") == 0) {
+                    current++; /* consume IF */
+                    if (!match("LPAREN")) error(line, "Expected '(' after if");
+                    ASTNode *cond = parse_expression();
+                    if (!match("RPAREN")) error(line, "Expected ')' after if condition");
+                    if (!match("LBRACE")) error(line, "Expected '{' after if condition");
+
+                    ASTNode **then_stmts = (ASTNode**)malloc(sizeof(ASTNode*) * (size_t)i);
+                    int then_count = 0;
+                    while (current < i && is_statement_start(arr[current])) {
+                        ASTNode *s = parse_statement();
+                        if (s) then_stmts[then_count++] = s;
+                        if (current < i && strcmp(arr[current], "SEMICOLON") == 0) current++;
+                    }
+                    if (!match("RBRACE")) error(line, "Expected '}' after if body");
+
+                    ASTNode *then_body = (ASTNode*)malloc(sizeof(ASTNode));
+                    then_body->type = AST_STATEMENTS;
+                    then_body->statements.stmts = then_stmts;
+                    then_body->statements.count = then_count;
+
+                    ASTNode *elif_node = (ASTNode*)malloc(sizeof(ASTNode));
+                    elif_node->type = AST_IF;
+                    elif_node->ifstmt.condition = cond;
+                    elif_node->ifstmt.then_branch = then_body;
+                    elif_node->ifstmt.else_branch = NULL;
+
+                    if (!last_if) {
+                        /* first else-if becomes the else_body of the original if */
+                        else_body = elif_node;
+                    } else {
+                        last_if->ifstmt.else_branch = elif_node;
+                    }
+                    last_if = elif_node;
+
+                    /* After an `else if` block we may have another `else` token
+                     * which could be another `if` (chained) or a final else block.
+                     */
+                    if (current < i && strcmp(arr[current], "ELSE") == 0) {
+                        current++; /* consume ELSE */
+                        continue; /* loop will check if next is IF */
+                    }
+                    break;
+                }
+
+                /* If we broke out because we consumed an ELSE that isn't followed
+                 * by IF, then current currently points after ELSE and we should
+                 * parse a final else block and attach it to the last_if.
+                 */
+                if (current < i && strcmp(arr[current], "LBRACE") == 0) {
+                    /* parse final else { ... } */
+                    if (!match("LBRACE")) error(line, "Expected '{' after else");
+                    ASTNode **else_stmts = (ASTNode**)malloc(sizeof(ASTNode*) * (size_t)i);
+                    int else_count = 0;
+                    while (current < i && is_statement_start(arr[current])) {
+                        ASTNode *s = parse_statement();
+                        if (s) else_stmts[else_count++] = s;
+                        if (current < i && strcmp(arr[current], "SEMICOLON") == 0) current++;
+                    }
+                    if (!match("RBRACE")) error(line, "Expected '}' after else body");
+                    ASTNode *final_else = (ASTNode*)malloc(sizeof(ASTNode));
+                    final_else->type = AST_STATEMENTS;
+                    final_else->statements.stmts = else_stmts;
+                    final_else->statements.count = else_count;
+                    if (last_if) last_if->ifstmt.else_branch = final_else;
+                    else else_body = final_else;
+                }
+
+            } else {
+                /* plain else { ... } */
+                if (!match("LBRACE")) error(line, "Expected '{' after else");
+                ASTNode **else_stmts = (ASTNode**)malloc(sizeof(ASTNode*) * (size_t)i);
+                int else_count = 0;
+                while (current < i && is_statement_start(arr[current])) {
+                    ASTNode *s = parse_statement();
+                    if (s) else_stmts[else_count++] = s;
+                    if (current < i && strcmp(arr[current], "SEMICOLON") == 0) current++;
+                }
+                if (!match("RBRACE")) error(line, "Expected '}' after else body");
+                ASTNode *final_else = (ASTNode*)malloc(sizeof(ASTNode));
+                final_else->type = AST_STATEMENTS;
+                final_else->statements.stmts = else_stmts;
+                final_else->statements.count = else_count;
+                else_body = final_else;
             }
-            if (!match("RBRACE")) error(line, "Expected '}' after else body");
-            else_body = (ASTNode*)malloc(sizeof(ASTNode));
-            else_body->type = AST_STATEMENTS;
-            else_body->statements.stmts = else_stmts;
-            else_body->statements.count = else_count;
         }
 
         ASTNode *node = (ASTNode*)malloc(sizeof(ASTNode));

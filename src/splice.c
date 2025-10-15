@@ -48,6 +48,7 @@ int main(int argc, char **argv) {
     if (ext && strcmp(ext, ".spbc") == 0) {
         // bytecode file → reverse lexer
         lex_from_bytecode(arg);
+        info(0, "Loaded bytecode from %s (%ld bytes)\n", arg, file_len);
     } else {
         fprintf(stderr, "[ERROR] No tokens generated\n");
         free(file_data);
@@ -55,6 +56,7 @@ int main(int argc, char **argv) {
     }
 
     ASTNode *root = parse_statements();
+    info(0, "Parsing Code");
     if (!root) {
         fprintf(stderr, "[ERROR] Failed to parse source\n");
         free(file_data);
