@@ -11,10 +11,11 @@
 #include <stdarg.h>
 #include <ctype.h>
 #include <setjmp.h>
-#ifndef _WIN32
-  #include <dlfcn.h>   // only on Linux/macOS
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <dlfcn.h>
 #endif
-
 
 /* splice.h
 Copyright (c) The Sinha Group and Open-Splice */
@@ -1495,6 +1496,30 @@ static inline void interpret(ASTNode *node) {
 /* ============================================================
    Imports and toplevel driver
    ============================================================ */
+
+/* Cross-platform helper: look up and call a registration symbol in the
+ * main program image. Returns 1 on success (found and called), 0 on
+ * failure. Implemented for Windows and POSIX (dlopen/dlsym).
+ */
+static inline int call_registration_symbol(const char *sym) {
+#ifdef _WIN32
+    HMODULE libHandle = GetModuleHandle(NULL);
+    if (!libHandle) return 0;
+    FARPROC proc = GetProcAddress(libHandle, sym);
+    if (!proc) return 0;
+    void (*init_func)(void) = (void (*)(void))proc;
+    init_func();
+    return 1;
+#else
+    void *main_handle = dlopen(NULL, RTLD_LAZY);
+    if (!main_handle) return 0;
+    void (*init_func)(void) = (void (*)(void))dlsym(main_handle, sym);
+    if (!init_func) { dlclose(main_handle); return 0; }
+    init_func();
+    dlclose(main_handle);
+    return 1;
+#endif
+}
 static inline void handle_import(const char *filename) {
     const char *ext = strrchr(filename, '.');
 
@@ -1527,36 +1552,11 @@ static inline void handle_import(const char *filename) {
 
     char sym[512];
     snprintf(sym, sizeof(sym), "Splice_register_module_%s", clean);
-
-    void (*init_func)(void) = NULL;
-    void *main_handle = NULL;
-
-#if defined(RTLD_DEFAULT)
-    /* If RTLD_DEFAULT is available use it directly (platforms like macOS expose it). */
-    init_func = (void(*)(void)) dlsym(RTLD_DEFAULT, sym);
-#else
-    /* Otherwise open the main program object to search its symbol table. */
-    main_handle = dlopen(NULL, RTLD_LAZY);
-    if (main_handle) init_func = (void(*)(void)) dlsym(main_handle, sym);
-#endif
-    if (init_func) {
-        init_func();
-        if (main_handle) dlclose(main_handle);
-        return;
-    }
+    if (call_registration_symbol(sym)) return;
 
     /* Fallback: try the raw mod name (some modules use dots or other chars) */
     snprintf(sym, sizeof(sym), "Splice_register_module_%s", mod);
-#if defined(RTLD_DEFAULT)
-    if (!init_func) init_func = (void(*)(void)) dlsym(RTLD_DEFAULT, sym);
-#else
-    if (!init_func && main_handle) init_func = (void(*)(void)) dlsym(main_handle, sym);
-#endif
-    if (init_func) {
-        init_func();
-        if (main_handle) dlclose(main_handle);
-        return;
-    }
+    if (call_registration_symbol(sym)) return;
 
         error(0, "Unknown native module: %s", filename);
         return;
