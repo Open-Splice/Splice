@@ -8,16 +8,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Minimal run helper to satisfy the declaration and allow embedding
- * code to call a simple runner. This assumes tokens are already
- * present in `arr` (as the lexers do). */
-static inline void run_script(const char *src) {
-    (void)src;
-    current = 0;
-    ASTNode *root = parse_statements();
-    interpret(root);
-    free_ast(root);
-}
 #include <stdarg.h>
 #include <ctype.h>
 #include <setjmp.h>
