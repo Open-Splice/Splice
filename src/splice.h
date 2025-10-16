@@ -11,7 +11,10 @@
 #include <stdarg.h>
 #include <ctype.h>
 #include <setjmp.h>
-#include <dlfcn.h>
+#ifndef _WIN32
+  #include <dlfcn.h>   // only on Linux/macOS
+#endif
+
 
 /* splice.h
 Copyright (c) The Sinha Group and Open-Splice */
