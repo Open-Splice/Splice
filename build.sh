@@ -20,7 +20,7 @@ echo "Proceeding with build on $OS/$ARCH..."
 echo "Building Splice runtime and native module..."
 
 # Compile Splice runtime (with SDK globals)
-gcc -DSDK_IMPLEMENTATION -Isrc -Wall -Wextra -c src/Splice.c -o "$BIN_DIR/Splice.o"
+gcc -DSDK_IMPLEMENTATION -Isrc -Wall -Wextra -c src/splice.c -o "$BIN_DIR/Splice.o"
 
 # Compile native module without SDK_IMPLEMENTATION
 gcc -Isrc -Wall -Wextra -c src/module_stubs.c -o "$BIN_DIR/module_stubs.o"
