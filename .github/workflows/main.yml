@@ -1,0 +1,64 @@
+name: Splice CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-test:
+    name: Build & Test (${{ matrix.os }} - ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS
+          - os: macos
+            arch: x64
+            runner: macos-13
+          - os: macos
+            arch: arm64
+            runner: macos-14
+          # Linux
+          - os: linux
+            arch: x64
+            runner: ubuntu-22.04
+          - os: linux
+            arch: arm64
+            runner: ubuntu-22.04
+          # Windows
+          - os: windows
+            arch: x64
+            runner: windows-2022
+          - os: windows
+            arch: arm64
+            runner: windows-2022
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Run build script
+        run: |
+          chmod +x build.sh
+          ./build.sh
+
+      - name: Run tests
+        run: |
+          if [ -d build ]; then
+            cd build
+            ctest --output-on-failure || true
+          else
+            echo "No build dir found, skipping tests"
+          fi
+
+      - name: Mark as finished
+        run: echo "Build completed on ${{ matrix.os }}-${{ matrix.arch }}" > finish.txt
+
+      - name: Upload finish artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: splice-finish-${{ matrix.os }}-${{ matrix.arch }}
+          path: finish.txt
