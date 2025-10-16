@@ -11,19 +11,19 @@ if [[ "${1-}" == "--force" ]]; then
 fi
 
 echo "Proceeding with build..."
-echo "Building Splice runtime and native module..."
+echo "Building Splice src and native module..."
 
-# Compile runtime (emit SDK globals in this TU)
-gcc -DSDK_IMPLEMENTATION -Iruntime -Wall -Wextra -c runtime/Splice.c -o Splice.o
+# Compile src (emit SDK globals in this TU)
+gcc -DSDK_IMPLEMENTATION -Iruntime -Wall -Wextra -c src/Splice.c -o Splice.o
 
 # Compile native module without SDK_IMPLEMENTATION
-gcc -Iruntime -Wall -Wextra -c runtime/module_stubs.c -o module_stubs.o
+gcc -Isrc -Wall -Wextra -c src/module_stubs.c -o module_stubs.o
 
 # Link executable (local binary: Splice)
 gcc Splice.o module_stubs.o -o Splice
 # Build messages
 echo "Building spbuild (bytecode compiler)..."
-gcc -Iruntime -Wall -Wextra runtime/build.c -o spbuild
+gcc -Iruntime -Wall -Wextra src/build.c -o spbuild
 sudo cp spbuild /usr/local/bin/spbuild
 # Compute checksums (use shasum which exists on macOS; fallback when not present)
 NEWSUM=""
