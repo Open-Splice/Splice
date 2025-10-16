@@ -7,12 +7,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
 #include <stdarg.h>
 #include <ctype.h>
 #include <setjmp.h>
 #include <dlfcn.h>
 
-
+/* splice.h
+Copyright (c) The Sinha Group and Open-Splice */
 typedef enum {
     VAL_NUMBER,
     VAL_STRING,
@@ -1520,16 +1522,38 @@ static inline void handle_import(const char *filename) {
         }
         clean[ci] = '\0';
 
-        char sym[512];
-        snprintf(sym, sizeof(sym), "Splice_register_module_%s", clean);
+    char sym[512];
+    snprintf(sym, sizeof(sym), "Splice_register_module_%s", clean);
 
-        void (*init_func)(void) = (void(*)(void)) dlsym(RTLD_DEFAULT, sym);
-        if (init_func) { init_func(); return; }
+    void (*init_func)(void) = NULL;
+    void *main_handle = NULL;
 
-        /* Fallback: try the raw mod name (some modules use dots or other chars) */
-        snprintf(sym, sizeof(sym), "Splice_register_module_%s", mod);
-        init_func = (void(*)(void)) dlsym(RTLD_DEFAULT, sym);
-        if (init_func) { init_func(); return; }
+#if defined(RTLD_DEFAULT)
+    /* If RTLD_DEFAULT is available use it directly (platforms like macOS expose it). */
+    init_func = (void(*)(void)) dlsym(RTLD_DEFAULT, sym);
+#else
+    /* Otherwise open the main program object to search its symbol table. */
+    main_handle = dlopen(NULL, RTLD_LAZY);
+    if (main_handle) init_func = (void(*)(void)) dlsym(main_handle, sym);
+#endif
+    if (init_func) {
+        init_func();
+        if (main_handle) dlclose(main_handle);
+        return;
+    }
+
+    /* Fallback: try the raw mod name (some modules use dots or other chars) */
+    snprintf(sym, sizeof(sym), "Splice_register_module_%s", mod);
+#if defined(RTLD_DEFAULT)
+    if (!init_func) init_func = (void(*)(void)) dlsym(RTLD_DEFAULT, sym);
+#else
+    if (!init_func && main_handle) init_func = (void(*)(void)) dlsym(main_handle, sym);
+#endif
+    if (init_func) {
+        init_func();
+        if (main_handle) dlclose(main_handle);
+        return;
+    }
 
         error(0, "Unknown native module: %s", filename);
         return;
