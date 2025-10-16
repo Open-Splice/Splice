@@ -7,6 +7,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* Minimal run helper to satisfy the declaration and allow embedding
+ * code to call a simple runner. This assumes tokens are already
+ * present in `arr` (as the lexers do). */
+static inline void run_script(const char *src) {
+    (void)src;
+    current = 0;
+    ASTNode *root = parse_statements();
+    interpret(root);
+    free_ast(root);
+}
 #include <stdarg.h>
 #include <ctype.h>
 #include <setjmp.h>
@@ -1521,26 +1532,38 @@ static inline void handle_import(const char *filename) {
         }
         clean[ci] = '\0';
 
-        char sym[512];
-        snprintf(sym, sizeof(sym), "Splice_register_module_%s", clean);
+    char sym[512];
+    snprintf(sym, sizeof(sym), "Splice_register_module_%s", clean);
 
-    /* Use dlopen(NULL) to get the main program handle portably instead
-     * of relying on RTLD_DEFAULT which may not be visible under some
-     * feature test macros on certain platforms. dlopen(NULL, ..)
-     * returns a handle for the main program object which we can use
-     * with dlsym(). */
-    void *main_handle = dlopen(NULL, RTLD_LAZY);
     void (*init_func)(void) = NULL;
-    if (main_handle) init_func = (void(*)(void)) dlsym(main_handle, sym);
-    if (init_func) { init_func(); return; }
+    void *main_handle = NULL;
 
-        /* Fallback: try the raw mod name (some modules use dots or other chars) */
-        snprintf(sym, sizeof(sym), "Splice_register_module_%s", mod);
-        if (main_handle) {
-            snprintf(sym, sizeof(sym), "Splice_register_module_%s", mod);
-            init_func = (void(*)(void)) dlsym(main_handle, sym);
-            if (init_func) { init_func(); return; }
-        }
+#if defined(RTLD_DEFAULT)
+    /* If RTLD_DEFAULT is available use it directly (platforms like macOS expose it). */
+    init_func = (void(*)(void)) dlsym(RTLD_DEFAULT, sym);
+#else
+    /* Otherwise open the main program object to search its symbol table. */
+    main_handle = dlopen(NULL, RTLD_LAZY);
+    if (main_handle) init_func = (void(*)(void)) dlsym(main_handle, sym);
+#endif
+    if (init_func) {
+        init_func();
+        if (main_handle) dlclose(main_handle);
+        return;
+    }
+
+    /* Fallback: try the raw mod name (some modules use dots or other chars) */
+    snprintf(sym, sizeof(sym), "Splice_register_module_%s", mod);
+#if defined(RTLD_DEFAULT)
+    if (!init_func) init_func = (void(*)(void)) dlsym(RTLD_DEFAULT, sym);
+#else
+    if (!init_func && main_handle) init_func = (void(*)(void)) dlsym(main_handle, sym);
+#endif
+    if (init_func) {
+        init_func();
+        if (main_handle) dlclose(main_handle);
+        return;
+    }
 
         error(0, "Unknown native module: %s", filename);
         return;
@@ -1595,14 +1618,3 @@ static inline void handle_import(const char *filename) {
 
 
 #endif /* Splice_H */
-
-/* Minimal run helper: not heavily used by the build but provided to
- * satisfy the static declaration and allow embedding code to call a
- * simple runner with already-lexed tokens or bytecode file. */
-static inline void run_script(const char *src) {
-    (void)src;
-    current = 0;
-    ASTNode *root = parse_statements();
-    interpret(root);
-    free_ast(root);
-}
