@@ -10,6 +10,8 @@ The Current Version of Splice is: 1.0.0
     </td>
 </tr>
 
+[![CI](https://img.shields.io/github/actions/workflow/status/Open-Splice/Splice/main.yml?branch=main&label=Splice%20CI%2FCD&logo=github&style=plastic)](https://github.com/Reboy20000/Splice/actions/workflows/ci.yml)
+
 # The Splice Programming Language
 
 Splice is a Open-Source, High Level, Dynamic Programming language developed by Open-Splice, A Sinha Group Orginization to make writing code for embedded systems easier. This is the main Github repo where all source code of Splice remains. Installaition of Splice can be found below.
