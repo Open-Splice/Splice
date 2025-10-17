@@ -49,8 +49,8 @@ if [[ $FORCE -eq 0 && -x "$INSTALL_DIR/spbuild" && -x "$INSTALL_DIR/Splice" ]]; 
     echo "Binaries already exist in $INSTALL_DIR. Use --force to overwrite."
 else
     if [[ "$OS" == "linux" || "$OS" == "darwin" ]]; then
+        sudo cp "$BIN_DIR/Splice" "$INSTALL_DIR/splice"
         sudo cp "$BIN_DIR/spbuild" "$INSTALL_DIR/spbuild"
-        sudo cp "$BIN_DIR/Splice"  "$INSTALL_DIR/Splice"
     elif [[ "$OS" == mingw* || "$OS" == cygwin* ]]; then
         cp "$BIN_DIR/spbuild" "$INSTALL_DIR/spbuild.exe"
         cp "$BIN_DIR/Splice"  "$INSTALL_DIR/Splice.exe"
