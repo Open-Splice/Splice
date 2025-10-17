@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # Cross-platform build script for Splice
-# Builds local binaries into ./bin (no system install required)
-# Works on macOS, Linux, and Windows (GitHub Actions)
+# Builds local binaries into ./bin, then installs them to a system path
+# Works on macOS, Linux, and Windows (GitHub Actions or local)
 
 FORCE=0
 if [[ "${1-}" == "--force" ]]; then
@@ -31,37 +31,31 @@ gcc "$BIN_DIR/Splice.o" "$BIN_DIR/module_stubs.o" -o "$BIN_DIR/Splice"
 echo "Building spbuild (bytecode compiler)..."
 gcc -Isrc -Wall -Wextra src/build.c -o "$BIN_DIR/spbuild"
 
-# --- Compute checksums ---
-NEWBIN="$BIN_DIR/Splice"
-OLDBIN="/usr/local/bin/Splice"
-
-NEWSUM=""
-OLDSUM=""
-
-if command -v shasum >/dev/null 2>&1; then
-    NEWSUM=$(shasum -a 256 "$NEWBIN" | awk '{print $1}')
-    [[ -f "$OLDBIN" ]] && OLDSUM=$(shasum -a 256 "$OLDBIN" | awk '{print $1}') || true
-elif command -v sha256sum >/dev/null 2>&1; then
-    NEWSUM=$(sha256sum "$NEWBIN" | awk '{print $1}')
-    [[ -f "$OLDBIN" ]] && OLDSUM=$(sha256sum "$OLDBIN" | awk '{print $1}') || true
-elif [[ "$OS" == "mingw"* || "$OS" == "cygwin"* ]]; then
-    # Windows GitHub runners: use CertUtil
-    NEWSUM=$(certutil -hashfile "$NEWBIN" SHA256 | findstr /v "hash" | tr -d '\r\n')
-    [[ -f "$OLDBIN" ]] && OLDSUM=$(certutil -hashfile "$OLDBIN" SHA256 | findstr /v "hash" | tr -d '\r\n') || true
+# --- Install section ---
+INSTALL_DIR=""
+if [[ "$OS" == "linux" || "$OS" == "darwin" ]]; then
+    INSTALL_DIR="/usr/local/bin"
+elif [[ "$OS" == mingw* || "$OS" == cygwin* ]]; then
+    # On Windows GitHub Actions (MinGW/Cygwin), use a writable path
+    INSTALL_DIR="/usr/bin"
+else
+    echo "Unsupported OS: $OS"
+    exit 1
 fi
 
-# --- Install (only on local dev, not CI) ---
-if [[ "${CI-}" == "true" ]]; then
-    echo "CI build: skipping install into /usr/local/bin"
+echo "Installing binaries into $INSTALL_DIR..."
+
+if [[ $FORCE -eq 0 && -x "$INSTALL_DIR/spbuild" && -x "$INSTALL_DIR/Splice" ]]; then
+    echo "Binaries already exist in $INSTALL_DIR. Use --force to overwrite."
 else
-    if [[ $FORCE -eq 0 && -n "$OLDSUM" && "$NEWSUM" == "$OLDSUM" ]]; then
-        echo "$OLDBIN is already the current build (checksums match). Skipping install."
-    else
-        echo "Installing Splice to $OLDBIN (requires sudo)..."
-        sudo cp "$BIN_DIR/spbuild" /usr/local/bin/spbuild
-        sudo cp "$BIN_DIR/Splice"  /usr/local/bin/Splice
-        echo "Build and install complete."
+    if [[ "$OS" == "linux" || "$OS" == "darwin" ]]; then
+        sudo cp "$BIN_DIR/spbuild" "$INSTALL_DIR/spbuild"
+        sudo cp "$BIN_DIR/Splice"  "$INSTALL_DIR/Splice"
+    elif [[ "$OS" == mingw* || "$OS" == cygwin* ]]; then
+        cp "$BIN_DIR/spbuild" "$INSTALL_DIR/spbuild.exe"
+        cp "$BIN_DIR/Splice"  "$INSTALL_DIR/Splice.exe"
     fi
+    echo "Installation complete."
 fi
 
 echo "Cleaning up object files..."
