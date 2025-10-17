@@ -12,6 +12,8 @@ The Current Version of Splice is: 1.0.0
 
 [![CI](https://img.shields.io/github/actions/workflow/status/Open-Splice/Splice/main.yml?branch=main&label=Splice%20CI%2FCD&logo=github&style=plastic)](https://github.com/Reboy20000/Splice/actions/workflows/ci.yml)
 
+[![Live on GitBook](https://img.shields.io/badge/Live%20on-Gitbook-black.svg?style=plastic&logo=gitbook&logoColor=white)](https://sinha.gitbook.io/splice)
+
 [![Reddit](https://img.shields.io/badge/On-Reddit-%23FF4500.svg?style=plastic&logo=Reddit&logoColor=white)](https://www.reddit.com/r/OpenSplice/)
 
 # The Splice Programming Language
