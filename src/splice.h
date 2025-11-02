@@ -704,7 +704,7 @@ static inline ASTNode *parse_statement(void) {
             if (!match("LBRACE")) error(line, "Expected '{' after func parameters");
             ASTNode **stmts = (ASTNode**)malloc(sizeof(ASTNode*) * (size_t)i);
             int count = 0;
-            while (current < i && is_statement_start(arr[current])) {
+            while (current < i && strcmp(arr[current], "RBRACE") != 0 && strcmp(arr[current], "SEMICOLON") != 0) {
                 ASTNode *st = parse_statement();
                 if (st) stmts[count++] = st;
                 if (current < i && strcmp(arr[current], "SEMICOLON") == 0) current++;
@@ -810,7 +810,7 @@ static inline ASTNode *parse_statement(void) {
         if (!match("LBRACE")) error(line, "Expected '{' after while condition");
         ASTNode **stmts = (ASTNode**)malloc(sizeof(ASTNode*) * (size_t)i);
         int count = 0;
-        while (current < i && is_statement_start(arr[current])) {
+        while (current < i && strcmp(arr[current], "RBRACE") != 0 && strcmp(arr[current], "SEMICOLON") != 0) {
             ASTNode *s = parse_statement();
             if (s) stmts[count++] = s;
             if (current < i && strcmp(arr[current], "SEMICOLON") == 0) current++;
@@ -836,7 +836,7 @@ static inline ASTNode *parse_statement(void) {
         if (!match("LBRACE")) error(line, "Expected '{' after if condition");
         ASTNode **then_stmts = (ASTNode**)malloc(sizeof(ASTNode*) * (size_t)i);
         int then_count = 0;
-        while (current < i && is_statement_start(arr[current])) {
+        while (current < i && strcmp(arr[current], "RBRACE") != 0 && strcmp(arr[current], "SEMICOLON") != 0) {
             ASTNode *s = parse_statement();
             if (s) then_stmts[then_count++] = s;
             if (current < i && strcmp(arr[current], "SEMICOLON") == 0) current++;
@@ -869,7 +869,7 @@ static inline ASTNode *parse_statement(void) {
 
                     ASTNode **then_stmts = (ASTNode**)malloc(sizeof(ASTNode*) * (size_t)i);
                     int then_count = 0;
-                    while (current < i && is_statement_start(arr[current])) {
+                    while (current < i && strcmp(arr[current], "RBRACE") != 0 && strcmp(arr[current], "SEMICOLON") != 0) {
                         ASTNode *s = parse_statement();
                         if (s) then_stmts[then_count++] = s;
                         if (current < i && strcmp(arr[current], "SEMICOLON") == 0) current++;
@@ -914,7 +914,7 @@ static inline ASTNode *parse_statement(void) {
                     if (!match("LBRACE")) error(line, "Expected '{' after else");
                     ASTNode **else_stmts = (ASTNode**)malloc(sizeof(ASTNode*) * (size_t)i);
                     int else_count = 0;
-                    while (current < i && is_statement_start(arr[current])) {
+                    while (current < i && strcmp(arr[current], "RBRACE") != 0 && strcmp(arr[current], "SEMICOLON") != 0) {
                         ASTNode *s = parse_statement();
                         if (s) else_stmts[else_count++] = s;
                         if (current < i && strcmp(arr[current], "SEMICOLON") == 0) current++;
@@ -933,7 +933,7 @@ static inline ASTNode *parse_statement(void) {
                 if (!match("LBRACE")) error(line, "Expected '{' after else");
                 ASTNode **else_stmts = (ASTNode**)malloc(sizeof(ASTNode*) * (size_t)i);
                 int else_count = 0;
-                while (current < i && is_statement_start(arr[current])) {
+                while (current < i && strcmp(arr[current], "RBRACE") != 0 && strcmp(arr[current], "SEMICOLON") != 0) {
                     ASTNode *s = parse_statement();
                     if (s) else_stmts[else_count++] = s;
                     if (current < i && strcmp(arr[current], "SEMICOLON") == 0) current++;
@@ -967,7 +967,7 @@ static inline ASTNode *parse_statement(void) {
             if (!match("LBRACE")) error(line, "Expected '{' after for range");
             ASTNode **stmts = (ASTNode**)malloc(sizeof(ASTNode*) * (size_t)i);
             int count = 0;
-            while (current < i && is_statement_start(arr[current])) {
+            while (current < i && strcmp(arr[current], "RBRACE") != 0 && strcmp(arr[current], "SEMICOLON") != 0) {
                 ASTNode *s = parse_statement();
                 if (s) stmts[count++] = s;
                 if (current < i && strcmp(arr[current], "SEMICOLON") == 0) current++;
@@ -1129,6 +1129,8 @@ static inline void free_ast(ASTNode *node) {
 
 static inline void Parse(void) {
     current = 0;
+    for (int t = 0; t < 10 && t < i; ++t)
+        printf("[DEBUG] token[%d] = %s\n", t, arr[t]);
     ASTNode *root = parse_statements();
     interpret(root);
     free_ast(root);
