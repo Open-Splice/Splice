@@ -44,6 +44,8 @@ else
 fi
 
 echo "Installing binaries into $INSTALL_DIR..."
+mkdir -p "$INSTALL_DIR"
+
 
 if [[ $FORCE -eq 0 && -x "$INSTALL_DIR/spbuild" && -x "$INSTALL_DIR/Splice" ]]; then
     echo "Binaries already exist in $INSTALL_DIR. Use --force to overwrite."
