@@ -15,7 +15,7 @@ ARCH="$(uname -m)"
 BIN_DIR="bin"
 
 mkdir -p "$BIN_DIR"
-
+echo "Installing Splice"
 echo "Proceeding with build on $OS/$ARCH..."
 echo "Building Splice runtime and native module..."
 
