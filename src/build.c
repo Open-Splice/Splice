@@ -313,9 +313,8 @@ int main(int c,char**v){
 
     inline_funcs(&t);
     printf("Optimized bytecode tokens\n");
-
+    printf("Compiled %s to %s\n",v[1],v[2]);
     emit(&t,v[2]);
     tv_free(&t);
     free(src);
-    printf("Compiled code");
 }
