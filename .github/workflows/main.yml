@@ -64,7 +64,7 @@ jobs:
           fi
         shell: bash
       - name: Testing Splice Code
-        run: ./spbuild test/main.sp main.spbc && ./splice main.spbc
+        run: spbuild test/main.sp main.spbc && splice main.spbc
         shell: bash
       - name: Mark as finished
         run: echo "Build completed on ${{ matrix.os }}-${{ matrix.arch }}" > finish.txt
