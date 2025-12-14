@@ -64,8 +64,16 @@ jobs:
           fi
         shell: bash
       - name: Testing Splice Code
-        run: spbuild test/main.sp main.spbc && splice main.spbc
         shell: bash
+        run: |
+          if [[ "${{ matrix.os }}" == "windows" ]]; then
+            ./bin/spbuild.exe test/main.sp main.spbc
+            ./bin/Splice.exe main.spbc
+          else
+            ./bin/spbuild test/main.sp main.spbc
+            ./bin/Splice main.spbc
+          fi
+
       - name: Mark as finished
         run: echo "Build completed on ${{ matrix.os }}-${{ matrix.arch }}" > finish.txt
         shell: bash
