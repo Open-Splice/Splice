@@ -44,12 +44,9 @@ jobs:
         run: chmod +x build.sh
         shell: bash
 
-      - name: Verify binaries exist
+      - name: Run build script (CI mode)
+        run: CI=true ./build.sh
         shell: bash
-        run: |
-          echo "Contents of ./bin:"
-          ls -lh ./bin
-
 
       - name: Verify binaries exist
         run: |
@@ -67,7 +64,7 @@ jobs:
           fi
         shell: bash
       - name: Testing Splice Code
-        run: spbuild test/main.sp main.spbc && splice main.spbc
+        run: ./spbuild test/main.sp main.spbc && ./splice main.spbc
         shell: bash
       - name: Mark as finished
         run: echo "Build completed on ${{ matrix.os }}-${{ matrix.arch }}" > finish.txt
