@@ -1,14 +1,12 @@
 #!/usr/bin/env bash
-set -eo pipefail
+set -euo pipefail
 
 # Cross-platform build script for Splice
-# Builds binaries into ./bin
-# Installs:
-#   macOS/Linux -> /usr/local/bin
-#   Windows     -> $HOME/bin
+# Builds local binaries into ./bin, then installs them to a system path
+# Works on macOS, Linux, and Windows (GitHub Actions or local)
 
 FORCE=0
-if [[ "${1:-}" == "--force" ]]; then
+if [[ "${1-}" == "--force" ]]; then
     FORCE=1
 fi
 
@@ -17,114 +15,58 @@ ARCH="$(uname -m)"
 BIN_DIR="bin"
 
 mkdir -p "$BIN_DIR"
+echo "Installing Splice"
+echo "Proceeding with build on $OS/$ARCH..."
+echo "Building Splice runtime and native module..."
 
-echo "========================================"
-echo " Building Splice"
-echo " OS   : $OS"
-echo " ARCH : $ARCH"
-echo "========================================"
+# Compile Splice runtime (with SDK globals)
+gcc -DSDK_IMPLEMENTATION -Isrc -Wall -Wextra -c src/splice.c -o "$BIN_DIR/Splice.o"
 
-# ------------------------------------------------------------
-# Detect Windows
-# ------------------------------------------------------------
-IS_WINDOWS=0
-case "$OS" in
-  mingw*|msys*|cygwin*) IS_WINDOWS=1 ;;
-esac
+# Compile native module without SDK_IMPLEMENTATION
+gcc -Isrc -Wall -Wextra -c src/module_stubs.c -o "$BIN_DIR/module_stubs.o"
 
-# ------------------------------------------------------------
-# Output binary names (THE SOURCE OF TRUTH)
-# ------------------------------------------------------------
-if [[ $IS_WINDOWS -eq 1 ]]; then
-    SPLICE_OUT="$BIN_DIR/Splice.exe"
-    SPBUILD_OUT="$BIN_DIR/spbuild.exe"
-else
-    SPLICE_OUT="$BIN_DIR/splice"
-    SPBUILD_OUT="$BIN_DIR/spbuild"
-fi
+# Link executable (local binary: Splice)
+gcc "$BIN_DIR/Splice.o" "$BIN_DIR/module_stubs.o" -o "$BIN_DIR/Splice"
 
-# ------------------------------------------------------------
-# Compile objects
-# ------------------------------------------------------------
-echo "[1/3] Compiling objects..."
+echo "Building spbuild (bytecode compiler)..."
+gcc -Isrc -Wall -Wextra src/build.c -o "$BIN_DIR/spbuild"
 
-gcc -DSDK_IMPLEMENTATION -Isrc -Wall -Wextra \
-    -c src/splice.c \
-    -o "$BIN_DIR/Splice.o"
-
-gcc -Isrc -Wall -Wextra \
-    -c src/module_stubs.c \
-    -o "$BIN_DIR/module_stubs.o"
-
-# ------------------------------------------------------------
-# Link splice
-# ------------------------------------------------------------
-echo "[2/3] Linking splice..."
-
-gcc "$BIN_DIR/Splice.o" "$BIN_DIR/module_stubs.o" -o "$SPLICE_OUT"
-
-# ------------------------------------------------------------
-# Build spbuild
-# ------------------------------------------------------------
-echo "[3/3] Building spbuild..."
-
-gcc -Isrc -Wall -Wextra src/build.c -o "$SPBUILD_OUT"
-
-# ------------------------------------------------------------
-# Cleanup objects
-# ------------------------------------------------------------
-rm -f "$BIN_DIR/Splice.o" "$BIN_DIR/module_stubs.o"
-
-echo "Build outputs:"
-ls -lh "$BIN_DIR"
-
-# ------------------------------------------------------------
-# CI guard (ABSOLUTE RULE)
-# ------------------------------------------------------------
-if [[ "${CI:-}" == "true" ]]; then
-    echo "CI detected — skipping install"
-    exit 0
-fi
-
-# ------------------------------------------------------------
-# Install path
-# ------------------------------------------------------------
-if [[ $IS_WINDOWS -eq 1 ]]; then
+# --- Install section ---
+INSTALL_DIR=""
+if [[ "$OS" == "linux" || "$OS" == "darwin" ]]; then
+    INSTALL_DIR="/usr/local/bin"
+elif [[ "$OS" == mingw* || "$OS" == cygwin* ]]; then
+    # On Windows GitHub Actions (MinGW/Cygwin), use a writable path
     INSTALL_DIR="$HOME/bin"
 else
-    INSTALL_DIR="/usr/local/bin"
+    echo "Unsupported OS: $OS"
+    exit 1
 fi
 
+echo "Installing binaries into $INSTALL_DIR..."
 mkdir -p "$INSTALL_DIR"
-echo "Installing to $INSTALL_DIR"
 
-# ------------------------------------------------------------
-# Skip install if already present
-# ------------------------------------------------------------
-if [[ $FORCE -eq 0 ]]; then
-    if [[ -x "$INSTALL_DIR/$(basename "$SPBUILD_OUT")" &&
-          -x "$INSTALL_DIR/$(basename "$SPLICE_OUT")" ]]; then
-        echo "Binaries already installed. Use --force to overwrite."
-        exit 0
-    fi
-fi
 
-# ------------------------------------------------------------
-# Install (NO RENAMING, EVER)
-# ------------------------------------------------------------
-if [[ $IS_WINDOWS -eq 1 ]]; then
-    cp "$SPBUILD_OUT" "$INSTALL_DIR/$(basename "$SPBUILD_OUT")"
-    cp "$SPLICE_OUT"  "$INSTALL_DIR/$(basename "$SPLICE_OUT")"
+if [[ $FORCE -eq 0 && -x "$INSTALL_DIR/spbuild" && -x "$INSTALL_DIR/Splice" ]]; then
+    echo "Binaries already exist in $INSTALL_DIR. Use --force to overwrite."
 else
-    sudo cp "$SPBUILD_OUT" "$INSTALL_DIR/$(basename "$SPBUILD_OUT")"
-    sudo cp "$SPLICE_OUT"  "$INSTALL_DIR/$(basename "$SPLICE_OUT")"
+    if [[ "$OS" == "linux" || "$OS" == "darwin" ]]; then
+        sudo cp "$BIN_DIR/Splice" "$INSTALL_DIR/splice"
+        sudo cp "$BIN_DIR/spbuild" "$INSTALL_DIR/spbuild"
+    elif [[ "$OS" == mingw* || "$OS" == cygwin* ]]; then
+        if [[ "$OS" == mingw* || "$OS" == msys* || "$OS" == cygwin* ]]; then
+            SPLICE_OUT="$BIN_DIR/Splice.exe"
+            SPBUILD_OUT="$BIN_DIR/spbuild.exe"
+        else
+            SPLICE_OUT="$BIN_DIR/splice"
+            SPBUILD_OUT="$BIN_DIR/spbuild"
+        fi
+
+    fi
+    echo "Installation complete."
 fi
 
-echo "Installation complete."
+echo "Cleaning up object files..."
+rm -f "$BIN_DIR/Splice.o" "$BIN_DIR/module_stubs.o"
 
-if [[ $IS_WINDOWS -eq 1 ]]; then
-    echo "NOTE: Ensure $HOME/bin is in your PATH (Git Bash usually is)."
-fi
-
-echo "========================================"
-echo "Done."
+echo "Splice build script finished."
