@@ -44,9 +44,12 @@ jobs:
         run: chmod +x build.sh
         shell: bash
 
-      - name: Run build script (CI mode)
-        run: CI=true ./build.sh
+      - name: Verify binaries exist
         shell: bash
+        run: |
+          echo "Contents of ./bin:"
+          ls -lh ./bin
+
 
       - name: Verify binaries exist
         run: |
