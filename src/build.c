@@ -317,5 +317,5 @@ int main(int c,char**v){
     emit(&t,v[2]);
     tv_free(&t);
     free(src);
-    printf("Compiled %s to %s\n",v[1],v[2]);
+    printf("Compiled code");
 }
