@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Cross-platform build script for Splice
-# Builds local binaries into ./bin, then installs them to a system path
-# Works on macOS, Linux, and Windows (GitHub Actions or local)
+# ============================================================
+# Splice build script
+# - Builds splice runtime + spbuild compiler
+# - Cross-platform: macOS, Linux, Windows (GitHub Actions / MSYS)
+# - Outputs binaries into ./bin
+# ============================================================
 
 FORCE=0
 if [[ "${1-}" == "--force" ]]; then
@@ -12,53 +15,86 @@ fi
 
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m)"
-BIN_DIR="bin"
+ROOT_DIR="$(pwd)"
+BIN_DIR="$ROOT_DIR/bin"
 
 mkdir -p "$BIN_DIR"
-echo "Installing Splice"
-echo "Proceeding with build on $OS/$ARCH..."
-echo "Building Splice runtime and native module..."
 
-# Compile Splice runtime (with SDK globals)
-gcc -DSDK_IMPLEMENTATION -Isrc -Wall -Wextra -c src/splice.c -o "$BIN_DIR/Splice.o"
+echo "========================================"
+echo " Splice Build Script"
+echo " OS   : $OS"
+echo " ARCH : $ARCH"
+echo " BIN  : $BIN_DIR"
+echo "========================================"
 
-# Compile native module without SDK_IMPLEMENTATION
-gcc -Isrc -Wall -Wextra -c src/module_stubs.c -o "$BIN_DIR/module_stubs.o"
+# ------------------------------------------------------------
+# Detect executable names
+# ------------------------------------------------------------
+SPLICE_BIN="splice"
+SPBUILD_BIN="spbuild"
 
-# Link executable (local binary: Splice)
-gcc "$BIN_DIR/Splice.o" "$BIN_DIR/module_stubs.o" -o "$BIN_DIR/Splice"
-
-echo "Building spbuild (bytecode compiler)..."
-gcc -Isrc -Wall -Wextra src/build.c -o "$BIN_DIR/spbuild"
-
-# --- Install section ---
-INSTALL_DIR=""
-if [[ "$OS" == "linux" || "$OS" == "darwin" ]]; then
-    INSTALL_DIR="/usr/local/bin"
-elif [[ "$OS" == mingw* || "$OS" == cygwin* ]]; then
-    # On Windows GitHub Actions (MinGW/Cygwin), use a writable path
-    INSTALL_DIR="/usr/bin"
-else
-    echo "Unsupported OS: $OS"
-    exit 1
+if [[ "$OS" == mingw* || "$OS" == cygwin* ]]; then
+    SPLICE_BIN="splice.exe"
+    SPBUILD_BIN="spbuild.exe"
 fi
 
-echo "Installing binaries into $INSTALL_DIR..."
-
-if [[ $FORCE -eq 0 && -x "$INSTALL_DIR/spbuild" && -x "$INSTALL_DIR/Splice" ]]; then
-    echo "Binaries already exist in $INSTALL_DIR. Use --force to overwrite."
-else
-    if [[ "$OS" == "linux" || "$OS" == "darwin" ]]; then
-        sudo cp "$BIN_DIR/Splice" "$INSTALL_DIR/splice"
-        sudo cp "$BIN_DIR/spbuild" "$INSTALL_DIR/spbuild"
-    elif [[ "$OS" == mingw* || "$OS" == cygwin* ]]; then
-        cp "$BIN_DIR/spbuild" "$INSTALL_DIR/spbuild.exe"
-        cp "$BIN_DIR/Splice"  "$INSTALL_DIR/Splice.exe"
-    fi
-    echo "Installation complete."
+# ------------------------------------------------------------
+# Skip build if binaries exist and not forced
+# ------------------------------------------------------------
+if [[ $FORCE -eq 0 && -x "$BIN_DIR/$SPLICE_BIN" && -x "$BIN_DIR/$SPBUILD_BIN" ]]; then
+    echo "Binaries already exist. Use --force to rebuild."
+    exit 0
 fi
 
-echo "Cleaning up object files..."
-rm -f "$BIN_DIR/Splice.o" "$BIN_DIR/module_stubs.o"
+# ------------------------------------------------------------
+# Compile Splice runtime
+# ------------------------------------------------------------
+echo "[1/3] Compiling Splice runtime..."
 
-echo "Splice build script finished."
+gcc -DSDK_IMPLEMENTATION \
+    -Isrc \
+    -Wall -Wextra \
+    -c src/splice.c \
+    -o "$BIN_DIR/splice.o"
+
+gcc -Isrc \
+    -Wall -Wextra \
+    -c src/module_stubs.c \
+    -o "$BIN_DIR/module_stubs.o"
+
+gcc \
+    "$BIN_DIR/splice.o" \
+    "$BIN_DIR/module_stubs.o" \
+    -o "$BIN_DIR/$SPLICE_BIN"
+
+# ------------------------------------------------------------
+# Compile spbuild (bytecode compiler)
+# ------------------------------------------------------------
+echo "[2/3] Compiling spbuild..."
+
+gcc -Isrc \
+    -Wall -Wextra \
+    src/build.c \
+    -o "$BIN_DIR/$SPBUILD_BIN"
+
+# ------------------------------------------------------------
+# Cleanup
+# ------------------------------------------------------------
+echo "[3/3] Cleaning up..."
+
+rm -f \
+    "$BIN_DIR/splice.o" \
+    "$BIN_DIR/module_stubs.o"
+
+# ------------------------------------------------------------
+# Done
+# ------------------------------------------------------------
+echo "========================================"
+echo " Build complete"
+echo "----------------------------------------"
+ls -lh "$BIN_DIR"
+echo "========================================"
+
+echo "Usage:"
+echo "  ./bin/$SPBUILD_BIN input.sp output.spbc"
+echo "  ./bin/$SPLICE_BIN  output.spbc"
