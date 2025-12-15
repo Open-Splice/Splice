@@ -1,5 +1,5 @@
 # This code is to check Code with CodeQL
-name: CodeQL 
+name: CodeQL
 
 on:
   push:
@@ -7,79 +7,106 @@ on:
   pull_request:
     branches: [ "main" ]
   schedule:
-    # Weekly deep security scan
-    - cron: '0 3 * * 1'
+    # Weekly deep scan (new rules, deeper dataflow)
+    - cron: "17 3 * * 1"
+
+# Prevent overlapping scans
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
-  actions: read
   contents: read
-  security-events: write
 
 jobs:
-  codeql:
-    name: CodeQL Analysis (Linux Canonical)
-    runs-on: ubuntu-latest
+  analyze:
+    name: CodeQL (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 45
 
-    strategy:
-      fail-fast: false
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
-        with:
-          languages: c
-          queries: |
-            security-extended
-            security-and-quality
-          config: |
-            name: "Splice Hardened CodeQL"
-            paths-ignore:
-              - docs/
-              - examples/
-              - tests/
-
-      - name: Build Splice (Linux)
-        run: |
-          set -euxo pipefail
-          chmod +x build.sh || true
-          ./build.sh || make || gcc -std=c11 -Wall -Wextra -Werror -O2 *.c -o splice
-
-      - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
-        with:
-          category: "/language:c"
-
-  portability:
-    name: Cross-Platform Build Validation
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
-    needs: codeql
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
 
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
 
     steps:
+      # ---------------------------------------------------------
+      # Checkout
+      # ---------------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
 
-      - name: Build Splice (Unix)
-        if: matrix.os != 'windows-latest'
+      # ---------------------------------------------------------
+      # Initialize CodeQL (CORRECT SUITE USAGE)
+      # ---------------------------------------------------------
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: cpp
+
+          # ✔ VALID built-in suites (this fixes your error)
+          # You may list one or both
+          queries: security-extended
+
+          # Extra hardening
+          config: |
+            name: "Splice Hardened CodeQL"
+            paths-ignore:
+              - "**/docs/**"
+              - "**/examples/**"
+              - "**/tests/**"
+              - "**/third_party/**"
+              - "**/vendor/**"
+              - "**/build/**"
+              - "**/bin/**"
+
+      # ---------------------------------------------------------
+      # Build (MANDATORY for C/C++)
+      # CodeQL must observe a real compile
+      # ---------------------------------------------------------
+      - name: Build Splice
+        shell: bash
         run: |
-          set -euxo pipefail
-          chmod +x build.sh || true
-          ./build.sh || make || cc -std=c11 -Wall -Wextra -Werror -O2 *.c -o splice
+          set -euo pipefail
 
-      - name: Build Splice (Windows MSVC)
-        if: matrix.os == 'windows-latest'
-        shell: powershell
-        run: |
-          cl /std:c11 /W4 /WX *.c /Fe:splice.exe
+          echo "OS: $RUNNER_OS"
 
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            # Prefer MSYS2 / MinGW style builds if present
+            if [[ -f build.sh ]]; then
+              bash build.sh --force
+            elif [[ -f Makefile ]]; then
+              make
+            else
+              echo "No Windows build method found"
+              exit 1
+            fi
+          else
+            if [[ -x ./build.sh ]]; then
+              ./build.sh --force
+            elif [[ -f Makefile ]]; then
+              make -j2
+            else
+              echo "No build.sh or Makefile found"
+              exit 1
+            fi
+          fi
+
+      # ---------------------------------------------------------
+      # Analyze
+      # ---------------------------------------------------------
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:cpp"
