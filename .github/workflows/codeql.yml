@@ -1,0 +1,85 @@
+# This code is to check Code with CodeQL
+name: CodeQL 
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  schedule:
+    # Weekly deep security scan
+    - cron: '0 3 * * 1'
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+jobs:
+  codeql:
+    name: CodeQL Analysis (Linux Canonical)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    strategy:
+      fail-fast: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: c
+          queries: |
+            security-extended
+            security-and-quality
+          config: |
+            name: "Splice Hardened CodeQL"
+            paths-ignore:
+              - docs/
+              - examples/
+              - tests/
+
+      - name: Build Splice (Linux)
+        run: |
+          set -euxo pipefail
+          chmod +x build.sh || true
+          ./build.sh || make || gcc -std=c11 -Wall -Wextra -Werror -O2 *.c -o splice
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:c"
+
+  portability:
+    name: Cross-Platform Build Validation
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    needs: codeql
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Splice (Unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          set -euxo pipefail
+          chmod +x build.sh || true
+          ./build.sh || make || cc -std=c11 -Wall -Wextra -Werror -O2 *.c -o splice
+
+      - name: Build Splice (Windows MSVC)
+        if: matrix.os == 'windows-latest'
+        shell: powershell
+        run: |
+          cl /std:c11 /W4 /WX *.c /Fe:splice.exe
+
