@@ -16,6 +16,9 @@ The Current Version of Splice is: 1.0.0
 
 [![Reddit](https://img.shields.io/badge/On-Reddit-%23FF4500.svg?style=plastic&logo=Reddit&logoColor=white)](https://www.reddit.com/r/OpenSplice/)
 
+[![Gitter chat](https://badges.gitter.im/gitterHQ/gitter.png)](https://app.gitter.im/#/room/#splice:gitter.im)
+
+
 # The Splice Programming Language
 
 Splice is an Open-Source, high-level, Dynamic Programming language developed by Open-Splice, A Sinha Group organisation, to make writing code for embedded systems easier. This is the main Github repo where all source code of Splice remains. Installation of Splice can be found below.
