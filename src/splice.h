@@ -1525,73 +1525,81 @@ static inline int call_registration_symbol(const char *sym) {
 static inline void handle_import(const char *filename) {
     const char *ext = strrchr(filename, '.');
 
-    // --- Case 1: C header module (.h) ---
-    if (ext && strcmp(ext, ".h") == 0) {
-        /* Dynamically look up a registration function named
-           Splice_register_module_<basename> where <basename> is the
-           header filename without directory or .h, normalized to
-           alphanumerics/underscores. This allows any compiled-in
-           native module to register itself without special-casing.
-        */
+    if (!ext) {
+        error(0, "Import requires file extension: %s", filename);
+        return;
+    }
+
+    /* ============================================================
+       Case 1: Native C module (.h)
+       ============================================================ */
+    if (strcmp(ext, ".h") == 0) {
         const char *base = strrchr(filename, '/');
         base = base ? base + 1 : filename;
-        size_t blen = strlen(base);
-        char mod[256];
-        if (blen >= sizeof(mod)) blen = sizeof(mod) - 1;
-        memcpy(mod, base, blen);
-        mod[blen] = '\0';
-        /* strip trailing .h */
-        if (blen > 2 && strcmp(mod + blen - 2, ".h") == 0) mod[blen - 2] = '\0';
 
-        /* normalize into identifier characters */
+        char mod[256];
+        strncpy(mod, base, sizeof(mod) - 1);
+        mod[sizeof(mod) - 1] = '\0';
+
+        /* strip .h */
+        char *dot = strrchr(mod, '.');
+        if (dot) *dot = '\0';
+
+        /* normalize name */
         char clean[256];
         size_t ci = 0;
-        for (size_t j = 0; j < strlen(mod) && ci + 1 < sizeof(clean); ++j) {
-            char c = mod[j];
-            clean[ci++] = (isalnum((unsigned char)c) ? c : '_');
+        for (size_t i = 0; mod[i] && ci + 1 < sizeof(clean); i++) {
+            clean[ci++] = isalnum((unsigned char)mod[i]) ? mod[i] : '_';
         }
         clean[ci] = '\0';
 
-    char sym[512];
-    snprintf(sym, sizeof(sym), "Splice_register_module_%s", clean);
-    if (call_registration_symbol(sym)) return;
+        char sym[512];
+        snprintf(sym, sizeof(sym), "Splice_register_module_%s", clean);
 
-    /* Fallback: try the raw mod name (some modules use dots or other chars) */
-    snprintf(sym, sizeof(sym), "Splice_register_module_%s", mod);
-    if (call_registration_symbol(sym)) return;
+        if (call_registration_symbol(sym))
+            return;
 
         error(0, "Unknown native module: %s", filename);
         return;
     }
 
-    // --- Case 2: Splice source (.Splice) ---
-    FILE *file = fopen(filename, "r");
-    if (!file) {
-        error(0, "Could not import file: %s", filename);
+    /* ============================================================
+       Case 2: Splice bytecode module (.spbc)  ✅
+       ============================================================ */
+    if (strcmp(ext, ".spbc") != 0) {
+        error(0,
+            "Splice import only supports compiled bytecode (.spbc).\n"
+            "Compile '%s' using spbuild first.",
+            filename
+        );
         return;
     }
-    fseek(file, 0, SEEK_END);
-    long length = ftell(file);
-    rewind(file);
 
-    char *code = (char*)malloc((size_t)length + 1);
-    if (!code) { fclose(file); error(0, "Out of memory reading %s", filename); }
-    fread(code, 1, (size_t)length, file);
-    code[length] = '\0';
+    FILE *file = fopen(filename, "rb");
+    if (!file) {
+        error(0, "Could not import bytecode file: %s", filename);
+        return;
+    }
     fclose(file);
 
-    int old_i = i, old_current = current, old_line = line;
-    lex_from_bytecode(code);
-    free(code);
+    /* Save lexer / parser state */
+    int old_i = i;
+    int old_current = current;
+    int old_line = line;
 
-    int import_start = old_i, import_end = i;
+    /* Lex SPBC */
+    lex_from_bytecode(filename);
+
+    int import_start = old_i;
+    int import_end   = i;
 
     current = import_start;
+
     ASTNode *root = parse_statements();
 
-    // Only keep function definitions
+    /* Only keep function definitions */
     if (root && root->type == AST_STATEMENTS) {
-        for (int j = 0; j < root->statements.count; ++j) {
+        for (int j = 0; j < root->statements.count; j++) {
             ASTNode *stmt = root->statements.stmts[j];
             if (stmt && stmt->type == AST_FUNC_DEF) {
                 add_func(stmt->funcdef.funcname, stmt);
@@ -1599,16 +1607,20 @@ static inline void handle_import(const char *filename) {
             }
         }
     }
+
     free_ast(root);
 
+    /* Restore state */
     current = old_current;
     line    = old_line;
 
-    for (int j = import_start; j < import_end; ++j) {
-        free(arr[j]); arr[j] = NULL;
+    for (int j = import_start; j < import_end; j++) {
+        free(arr[j]);
+        arr[j] = NULL;
     }
     i = old_i;
 }
+
 
 
 
