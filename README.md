@@ -20,10 +20,43 @@ The Current Version of Splice is: 1.0.0
 
 [![CodeQL](https://github.com/Open-Splice/Splice/actions/workflows/codeql.yml/badge.svg)](https://github.com/OpenSplice/Splice/actions/workflows/codeql.yml)
 
-
 # The Splice Programming Language
 
 Splice is an Open-Source, high-level, Dynamic Programming language developed by Open-Splice, A Sinha Group organisation, to make writing code for embedded systems easier. This is the main Github repo where all source code of Splice remains. Installation of Splice can be found below.
+
+## Whats in the world
+
+Programming embedded systems today is dominated by **C and C++**, which offer excellent performance but come with a steep learning curve and complex memory management.
+
+Higher-level languages such as Lua aim to simplify development, but VM complexity and bytecode handling can become challenging on constrained systems.
+
+Splice explores an alternative design that prioritizes **clarity, simplicity, and inspectable execution** while remaining suitable for embedded environments.
+
+## Why Splice
+
+Splice is designed to:
+
+- Reduce VM complexity
+- Keep execution transparent and debuggable
+- Maintain a small, understandable core
+- Make embedded-focused language tooling easier to reason about
+
+This project is **early-stage and experimental**, focused on validating design decisions before expanding features.
+
+## How does Splice work?
+
+Splice does not use traditional numeric opcode-based bytecode
+(e.g. `0xA1 → LOAD`).
+
+Instead, it uses **KAB (Keyword Assigned Bytecode)**:
+
+- Bytecode instructions are represented using readable keywords
+- The VM directly interprets these semantic instructions
+- This simplifies debugging and tooling around bytecode
+
+This design reduces interpreter complexity and makes the bytecode easier to inspect and understand.
+
+The current SPVM runtime has been tested on desktop platforms and is designed with microcontrollers such as the **ESP32** in mind.
 
 ## How to Install?
 
