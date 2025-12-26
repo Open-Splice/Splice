@@ -1,8 +1,7 @@
 # Release notes
 
-Current Version: 0.9
+Current Version: 1.0
 
 ## Overview
 
-This Version of Splice fixed modules and many bugs.
-Also the builder, Spbuilder is now equippted with a full DCE, Comment Remover and much more to make the bytecode smaller.
+This Version of Splice Made it so now the ast Dce and all of the building is done in spbuild so vm can be use in a esp32
