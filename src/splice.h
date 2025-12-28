@@ -747,17 +747,19 @@ static inline Value eval(ASTNode *node) {
             return tmp;
         }
 
-        case AST_NUMBER:
+        case AST_NUMBER: {
             Value tmp;
             tmp.type = VAL_NUMBER;
             tmp.number = node->number;
             return tmp;
+        }
 
-        case AST_STRING:
+        case AST_STRING: {
             Value tmp;
             tmp.type = VAL_STRING;
             tmp.string = strdup(node->string ? node->string : "");
             return tmp;
+        }
 
         case AST_IDENTIFIER: {
             Var *v = get_var(node->string);
@@ -1012,11 +1014,12 @@ static inline Value eval(ASTNode *node) {
             return result;
         }
 
-        default:
+        default: {
             Value tmp;
             tmp.type = VAL_NUMBER;
             tmp.number = 0;
             return tmp;
+        }
     }
 }
 

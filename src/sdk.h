@@ -29,11 +29,11 @@ typedef struct {
 #define MAX_MODULES      8
 
 // Declare as extern by default
-extern SpliceCFuncEntry *Splice_native_funcs;
+extern SpliceCFuncEntry Splice_native_funcs[MAX_NATIVE_FUNCS];
 extern int Splice_native_func_count;
 
 typedef void (*SpliceModuleInit)(void);
-extern SpliceModuleInit *Splice_modules;
+extern SpliceModuleInit Splice_modules[MAX_MODULES];
 extern int Splice_module_count;
 
 /* ============================================================
@@ -106,5 +106,12 @@ static inline void Splice_init_all_modules(void) {
         Splice_modules[i]();
     }
 }
+
+#ifdef SDK_IMPLEMENTATION
+SpliceCFuncEntry Splice_native_funcs[MAX_NATIVE_FUNCS];
+int Splice_native_func_count = 0;
+SpliceModuleInit Splice_modules[MAX_MODULES];
+int Splice_module_count = 0;
+#endif
 
 #endif /* SDK_H */
