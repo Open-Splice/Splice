@@ -3,7 +3,7 @@
 #include <string.h>
 #include <ctype.h>
 
-#include "splice.h"  /* uses AST types + write_ast_to_spbc */
+#include "splice.h"  /* uses AST types + write_ast_to_spc */
 
 /* =========================
    Read whole file
@@ -32,7 +32,9 @@ typedef enum {
     TK_STRING,
 
     TK_LET, TK_FUNC, TK_RETURN, TK_PRINT,
+    TK_READ, TK_WRITE,
     TK_IF, TK_ELSE, TK_WHILE, TK_FOR, TK_IN,
+    TK_RAISE,
     TK_TRUE, TK_FALSE,
     TK_AND, TK_OR, TK_NOT,
 
@@ -134,11 +136,14 @@ static void tokenize(const char *src, TokVec *out) {
             else if (!strcmp(id,"func"))   kw=TK_FUNC;
             else if (!strcmp(id,"return")) kw=TK_RETURN;
             else if (!strcmp(id,"print"))  kw=TK_PRINT;
+            else if (!strcmp(id,"raise"))   kw=TK_RAISE;
             else if (!strcmp(id,"if"))     kw=TK_IF;
             else if (!strcmp(id,"else"))   kw=TK_ELSE;
             else if (!strcmp(id,"while"))  kw=TK_WHILE;
             else if (!strcmp(id,"for"))    kw=TK_FOR;
             else if (!strcmp(id,"in"))     kw=TK_IN;
+            else if (!strcmp(id,"read"))   kw = TK_READ;
+            else if (!strcmp(id,"write"))  kw = TK_WRITE;
             else if (!strcmp(id,"true"))   kw=TK_TRUE;
             else if (!strcmp(id,"false"))  kw=TK_FALSE;
             else if (!strcmp(id,"and"))    kw=TK_AND;
@@ -267,6 +272,15 @@ static ASTNode *parse_primary(void) {
         ASTNode *e = parse_expression();
         consume(TK_RPAREN, "Expected ')'");
         return e;
+    }
+    if (match(TK_READ)) {
+        consume(TK_LPAREN, "Expected '(' after read");
+        ASTNode *e = parse_expression();
+        consume(TK_RPAREN, "Expected ')' after read");
+
+        ASTNode *n = ast_new(AST_READ);
+        n->read.expr = e;
+        return n;
     }
 
     if (match(TK_LBRACKET)) {
@@ -411,6 +425,28 @@ static ASTNode *parse_statement(void) {
         return n;
     }
 
+    if (match(TK_WRITE)) {
+        consume(TK_LPAREN, "Expected '(' after write");
+        ASTNode *path = parse_expression();
+        consume(TK_COMMA, "Expected ',' after write path");
+        ASTNode *val = parse_expression();
+        consume(TK_RPAREN, "Expected ')' after write");
+
+        ASTNode *n = ast_new(AST_WRITE);
+        n->write.path = path;
+        n->write.value = val;
+        return n;
+    }
+
+    if (match(TK_RAISE)) {
+        consume(TK_LPAREN, "Expected '(' after raise");
+        ASTNode *e = parse_expression();
+        consume(TK_RPAREN, "Expected ')' after raise expr");
+        ASTNode *n = ast_new(AST_RAISE);
+        n->raise.expr = e;
+        return n;
+    }
+
     if (match(TK_RETURN)) {
         ASTNode *e = NULL;
         if (!at(TK_SEMI) && !at(TK_RBRACE)) e = parse_expression();
@@ -552,7 +588,7 @@ static ASTNode *parse_program(TokVec *v) {
    ========================= */
 int main(int argc, char **argv) {
     if (argc < 3) {
-        fprintf(stderr, "Usage: %s <input.sp> <output.spbc>\n", argv[0]);
+        fprintf(stderr, "Usage: %s <input.sp> <output.spc>\n", argv[0]);
         return 1;
     }
 
@@ -567,7 +603,7 @@ int main(int argc, char **argv) {
 
     ASTNode *root = parse_program(&tv);
 
-    if (!write_ast_to_spbc(argv[2], root)) {
+    if (!write_ast_to_spc(argv[2], root)) {
         fprintf(stderr, "Could not write: %s\n", argv[2]);
         free_ast(root);
         tv_free(&tv);
@@ -575,7 +611,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    success(0, "Wrote AST SPBC: %s", argv[2]);
+    success(0, "Wrote AST SPC: %s", argv[2]);
 
     free_ast(root);
     tv_free(&tv);

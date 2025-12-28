@@ -5,7 +5,7 @@ Shows array literals, indexing, append, len and index assignment.
 Usage
 
 ```bash
-Splice examples/array/array.sl
+Splice examples/array/array.spl
 ```
 
 Expected output

@@ -67,11 +67,11 @@ jobs:
         shell: bash
         run: |
           if [[ "${{ matrix.os }}" == "windows" ]]; then
-            ./bin/spbuild.exe test/main.sp main.spbc
-            ./bin/Splice.exe main.spbc
+            ./bin/spbuild.exe test/main.spl main.spc
+            ./bin/Splice.exe main.spc
           else
-            ./bin/spbuild test/main.sp main.spbc
-            ./bin/Splice main.spbc
+            ./bin/spbuild test/main.spl main.spc
+            ./bin/Splice main.spc
           fi
 
       - name: Mark as finished

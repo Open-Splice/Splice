@@ -1,0 +1,18 @@
+# ----------------------------
+# Splice language definitions
+# ----------------------------
+
+# Splice source files
+*.spl linguist-language=Splice
+*.spl text
+
+# Splice bytecode files
+*.spc linguist-language=Splice
+*.spc binary
+
+# ----------------------------
+# General sanity defaults
+# ----------------------------
+
+# Let Git handle line endings automatically
+* text=auto

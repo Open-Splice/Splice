@@ -1,8 +1,8 @@
 #ifndef Splice_H
 #define Splice_H
 /* Header-only Splice runtime + AST serialization.
-   - VM loads .spbc => AST => interpret
-   - Builder writes AST directly into .spbc
+   - VM loads .spc => AST => interpret
+   - Builder writes AST directly into .spc
 */
 
 #include <stdio.h>
@@ -88,6 +88,8 @@ typedef enum {
     AST_LET,
     AST_ASSIGN,
     AST_PRINT,
+    AST_READ,
+    AST_WRITE,
     AST_RAISE,
     AST_WARN,
     AST_INFO,
@@ -127,6 +129,9 @@ struct ASTNode {
         struct { ASTNode *expr; } raise;
         struct { ASTNode *expr; } warn;
         struct { ASTNode *expr; } info;
+        struct { ASTNode *expr; } read;
+        struct { ASTNode *path; ASTNode *value; } write;
+
 
         struct { ASTNode *cond; ASTNode *body; } whilestmt;
 
@@ -384,8 +389,8 @@ static inline void free_ast(ASTNode *node) {
 /* =========================
    AST serialization helpers
    ========================= */
-#define SPBC_MAGIC "SPBC"
-#define SPBC_VERSION 1
+#define SPC_MAGIC "SPC"
+#define SPC_VERSION 1
 #define AST_NULL_SENTINEL 0xFF
 
 static inline void w_u8(FILE *f, unsigned char v) {
@@ -454,6 +459,14 @@ static void write_ast_node(FILE *f, const ASTNode *n) {
             w_str(f, n->binop.op);
             write_ast_node(f, n->binop.left);
             write_ast_node(f, n->binop.right);
+            break;
+        case AST_READ:
+            write_ast_node(f, n->read.expr);
+            break;
+
+        case AST_WRITE:
+            write_ast_node(f, n->write.path);
+            write_ast_node(f, n->write.value);
             break;
 
         case AST_PRINT: write_ast_node(f, n->print.expr); break;
@@ -542,6 +555,15 @@ static ASTNode *read_ast_node(FILE *f) {
     ASTNode *n = ast_new(type);
 
     switch (type) {
+        case AST_READ:
+            n->read.expr = read_ast_node(f);
+            break;
+
+        case AST_WRITE:
+            n->write.path  = read_ast_node(f);
+            n->write.value = read_ast_node(f);
+            break;
+
         case AST_NUMBER:
             n->number = r_double(f);
             break;
@@ -651,12 +673,12 @@ static ASTNode *read_ast_node(FILE *f) {
 }
 
 /* Public: builder helper */
-static inline int write_ast_to_spbc(const char *out_file, const ASTNode *root) {
+static inline int write_ast_to_spc(const char *out_file, const ASTNode *root) {
     FILE *f = fopen(out_file, "wb");
     if (!f) return 0;
 
-    fwrite(SPBC_MAGIC, 1, 4, f);
-    w_u8(f, (unsigned char)SPBC_VERSION);
+    fwrite(SPC_MAGIC, 1, 4, f);
+    w_u8(f, (unsigned char)SPC_VERSION);
 
     write_ast_node(f, root);
     fclose(f);
@@ -664,16 +686,16 @@ static inline int write_ast_to_spbc(const char *out_file, const ASTNode *root) {
 }
 
 /* Public: VM helper */
-static inline ASTNode *read_ast_from_spbc(const char *filename) {
+static inline ASTNode *read_ast_from_spc(const char *filename) {
     FILE *f = fopen(filename, "rb");
     if (!f) { error(0, "Could not open bytecode file: %s", filename); return NULL; }
 
     char magic[5] = {0};
-    if (fread(magic, 1, 4, f) != 4) error(0, "Invalid SPBC (short)");
-    if (memcmp(magic, SPBC_MAGIC, 4) != 0) error(0, "Invalid SPBC magic");
+    if (fread(magic, 1, 4, f) != 4) error(0, "Invalid SPC (short)");
+    if (memcmp(magic, SPC_MAGIC, 4) != 0) error(0, "Invalid SPC magic");
 
     unsigned char ver = r_u8(f);
-    if (ver != SPBC_VERSION) error(0, "Unsupported SPBC version: %u", ver);
+    if (ver != SPC_VERSION) error(0, "Unsupported SPC version: %u", ver);
 
     ASTNode *root = read_ast_node(f);
     fclose(f);
@@ -689,6 +711,30 @@ static inline Value eval(ASTNode *node) {
     if (!node) return (Value){ .type = VAL_NUMBER, .number = 0 };
 
     switch (node->type) {
+        case AST_READ: {
+            char *path = eval_to_string(node->read.expr);
+
+            FILE *f = fopen(path, "rb");
+            if (!f) {
+                free(path);
+                return (Value){ .type = VAL_STRING, .string = strdup("") };
+            }
+
+            fseek(f, 0, SEEK_END);
+            long size = ftell(f);
+            rewind(f);
+
+            char *buf = (char*)malloc(size + 1);
+            if (!buf) error(0, "OOM in read()");
+            fread(buf, 1, size, f);
+            buf[size] = 0;
+
+            fclose(f);
+            free(path);
+
+            return (Value){ .type = VAL_STRING, .string = buf };
+        }
+
         case AST_NUMBER:
             return (Value){ .type = VAL_NUMBER, .number = node->number };
 
@@ -939,6 +985,39 @@ static inline void interpret(ASTNode *node) {
             else
                 interpret(node->ifstmt.else_branch);
             break;
+        case AST_WRITE: {
+            Value path = eval(node->write.path);
+            Value val  = eval(node->write.value);
+
+            if (path.type != VAL_STRING) {
+                error(0, "write(): path must be string");
+            }
+
+            char *out;
+            if (val.type == VAL_STRING) {
+                out = val.string;
+            } else {
+                char buf[64];
+                snprintf(buf, sizeof(buf), "%g", val.number);
+                out = strdup(buf);
+            }
+
+            FILE *f = fopen(path.string, "wb");
+            if (!f) {
+                free(path.string);
+                if (val.type == VAL_STRING) free(val.string);
+                error(0, "write(): cannot open file");
+            }
+
+            fwrite(out, 1, strlen(out), f);
+            fclose(f);
+
+            free(path.string);
+            if (val.type == VAL_STRING) free(val.string);
+            else free(out);
+
+            break;
+        }
 
         case AST_WHILE:
             while (eval(node->whilestmt.cond).number)
@@ -967,6 +1046,8 @@ static inline void interpret(ASTNode *node) {
             error(0, "%s", msg);
             break;
         }
+
+
         case AST_WARN: {
             char *msg = eval_to_string(node->warn.expr);
             warn(0, "%s", msg);

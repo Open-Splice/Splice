@@ -5,7 +5,7 @@
 
 int main(int argc, char **argv) {
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s <file.spbc>\n", argv[0]);
+        fprintf(stderr, "Usage: %s <file.spc>\n", argv[0]);
         return 1;
     }
 
@@ -16,12 +16,12 @@ int main(int argc, char **argv) {
 
     const char *arg = argv[1];
     const char *ext = strrchr(arg, '.');
-    if (!ext || strcmp(ext, ".spbc") != 0) {
-        fprintf(stderr, "[ERROR] only .spbc supported by VM now\n");
+    if (!ext || strcmp(ext, ".spc") != 0) {
+        fprintf(stderr, "[ERROR] only .spc supported by VM now\n");
         return 1;
     }
 
-    ASTNode *root = read_ast_from_spbc(arg);
+    ASTNode *root = read_ast_from_spc(arg);
     info(0, "Loaded AST from %s", arg);
 
     interpret(root);
