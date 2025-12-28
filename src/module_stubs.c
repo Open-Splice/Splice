@@ -14,7 +14,10 @@
 /* Example native: noop() -> 0 */
 static Value native_noop(int argc, Value *argv) {
     (void)argc; (void)argv;
-    return (Value){ .type = VAL_NUMBER, .number = 0 };
+    Value tmp;
+    tmp.type = VAL_NUMBER;
+    tmp.number = 0;
+    return tmp;
 }
 
 /* Constructor: register builtins and initialize any registered modules. */

@@ -25,27 +25,16 @@ typedef struct {
 /* ============================================================
    Globals (ONE copy across all .c files)
    ============================================================ */
-#define MAX_NATIVE_FUNCS 16384
-#define MAX_MODULES      64
+#define MAX_NATIVE_FUNCS 16
+#define MAX_MODULES      8
 
 // Declare as extern by default
-extern SpliceCFuncEntry Splice_native_funcs[MAX_NATIVE_FUNCS];
+extern SpliceCFuncEntry *Splice_native_funcs;
 extern int Splice_native_func_count;
 
 typedef void (*SpliceModuleInit)(void);
-extern SpliceModuleInit Splice_modules[MAX_MODULES];
+extern SpliceModuleInit *Splice_modules;
 extern int Splice_module_count;
-
-/* ============================================================
-   Definitions (only once if SDK_IMPLEMENTATION defined)
-   ============================================================ */
-#ifdef SDK_IMPLEMENTATION
-SpliceCFuncEntry Splice_native_funcs[MAX_NATIVE_FUNCS];
-int Splice_native_func_count = 0;
-
-SpliceModuleInit Splice_modules[MAX_MODULES];
-int Splice_module_count = 0;
-#endif
 
 /* ============================================================
    Helper: normalize names
@@ -55,7 +44,11 @@ static inline char *Splice_normalize_name(const char *raw) {
     size_t len = strlen(raw);
     while (len > 0 && isspace((unsigned char)raw[len-1])) len--;
 
+#ifdef __cplusplus
+    char *clean = new char[len + 1];
+#else
     char *clean = (char*)malloc(len + 1);
+#endif
     for (size_t j = 0; j < len; j++)
         clean[j] = (char)tolower((unsigned char)raw[j]);
     clean[len] = '\0';
@@ -82,12 +75,20 @@ static inline SpliceCFunc Splice_get_native(const char *name) {
 
         if (strcmp(Splice_native_funcs[i].name, clean) == 0) {
             SpliceCFunc fn = Splice_native_funcs[i].func;
+#ifdef __cplusplus
+            delete[] clean;
+#else
             free(clean);
+#endif
             return fn;
         }
     }
 
+#ifdef __cplusplus
+    delete[] clean;
+#else
     free(clean);
+#endif
     return NULL;
 }
 

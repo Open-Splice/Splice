@@ -12,11 +12,12 @@
 #include <ctype.h>
 #include <setjmp.h>
 
-#ifdef _WIN32
+#if defined(_WIN32)
   #include <windows.h>
-#else
+#elif !defined(ARDUINO)
   #include <dlfcn.h>
 #endif
+
 
 /* =========================
    Diagnostics
@@ -203,7 +204,7 @@ typedef struct {
     void  *obj;
 } Var;
 
-static Var vars[1024];
+static Var vars[32];
 static int var_count = 0;
 
 static inline Var *get_var(const char *name) {
@@ -265,7 +266,7 @@ static inline void set_var(const char *name, VarType type, double value, const c
     var_count++;
 }
 
-#define MAX_FUNCS 16384
+#define MAX_FUNCS 16
 typedef struct { char *name; ASTNode *def; } Func;
 static Func funcs[MAX_FUNCS];
 static int  func_count = 0;
@@ -708,7 +709,12 @@ static inline ASTNode *read_ast_from_spc(const char *filename) {
 static inline char *eval_to_string(ASTNode *node);
 
 static inline Value eval(ASTNode *node) {
-    if (!node) return (Value){ .type = VAL_NUMBER, .number = 0 };
+    if (!node) {
+        Value tmp;
+        tmp.type = VAL_NUMBER;
+        tmp.number = 0;
+        return tmp;
+    }
 
     switch (node->type) {
         case AST_READ: {
@@ -717,7 +723,10 @@ static inline Value eval(ASTNode *node) {
             FILE *f = fopen(path, "rb");
             if (!f) {
                 free(path);
-                return (Value){ .type = VAL_STRING, .string = strdup("") };
+                Value tmp;
+                tmp.type = VAL_STRING;
+                tmp.string = strdup("");
+                return tmp;
             }
 
             fseek(f, 0, SEEK_END);
@@ -732,22 +741,49 @@ static inline Value eval(ASTNode *node) {
             fclose(f);
             free(path);
 
-            return (Value){ .type = VAL_STRING, .string = buf };
+            Value tmp;
+            tmp.type = VAL_STRING;
+            tmp.string = buf;
+            return tmp;
         }
 
         case AST_NUMBER:
-            return (Value){ .type = VAL_NUMBER, .number = node->number };
+            Value tmp;
+            tmp.type = VAL_NUMBER;
+            tmp.number = node->number;
+            return tmp;
 
         case AST_STRING:
-            return (Value){ .type = VAL_STRING, .string = strdup(node->string ? node->string : "") };
+            Value tmp;
+            tmp.type = VAL_STRING;
+            tmp.string = strdup(node->string ? node->string : "");
+            return tmp;
 
         case AST_IDENTIFIER: {
             Var *v = get_var(node->string);
-            if (!v) return (Value){ .type = VAL_NUMBER, .number = 0 };
+            if (!v) {
+                Value tmp;
+                tmp.type = VAL_NUMBER;
+                tmp.number = 0;
+                return tmp;
+            }
 
-            if (v->type == VAR_STRING) return (Value){ .type = VAL_STRING, .string = strdup(v->str ? v->str : "") };
-            if (v->type == VAR_OBJECT) return (Value){ .type = VAL_OBJECT, .object = v->obj };
-            return (Value){ .type = VAL_NUMBER, .number = v->value };
+            if (v->type == VAR_STRING) {
+                Value tmp;
+                tmp.type = VAL_STRING;
+                tmp.string = strdup(v->str ? v->str : "");
+                return tmp;
+            }
+            if (v->type == VAR_OBJECT) {
+                Value tmp;
+                tmp.type = VAL_OBJECT;
+                tmp.object = v->obj;
+                return tmp;
+            }
+            Value tmp;
+            tmp.type = VAL_NUMBER;
+            tmp.number = v->value;
+            return tmp;
         }
 
         case AST_ARRAY_LITERAL: {
@@ -759,7 +795,10 @@ static inline Value eval(ASTNode *node) {
             oa->items = (Value*)calloc((size_t)(oa->capacity ? oa->capacity : 1), sizeof(Value));
             if (!oa->items) error(0, "OOM array items");
             for (int j = 0; j < node->arraylit.count; ++j) oa->items[j] = eval(node->arraylit.elements[j]);
-            return (Value){ .type = VAL_OBJECT, .object = oa };
+            Value tmp;
+            tmp.type = VAL_OBJECT;
+            tmp.object = oa;
+            return tmp;
         }
 
         case AST_INDEX_EXPR: {
@@ -771,7 +810,12 @@ static inline Value eval(ASTNode *node) {
             ObjArray *oa = (ObjArray*)target.object;
             if (!oa || oa->type != OBJ_ARRAY) error(0, "index: not an array");
 
-            if (idx < 0 || idx >= oa->count) return (Value){ .type = VAL_NUMBER, .number = 0 };
+            if (idx < 0 || idx >= oa->count) {
+                Value tmp;
+                tmp.type = VAL_NUMBER;
+                tmp.number = 0;
+                return tmp;
+            }
             return oa->items[idx];
         }
 
@@ -803,12 +847,23 @@ static inline Value eval(ASTNode *node) {
             }
             if (oa->items[idx].type == VAL_STRING) free(oa->items[idx].string);
             oa->items[idx] = val;
-            return (Value){ .type = VAL_NUMBER, .number = 1 };
+            Value tmp;
+            tmp.type = VAL_NUMBER;
+            tmp.number = 1;
+            return tmp;
         }
 
         case AST_BINARY_OP: {
             Value left  = eval(node->binop.left);
-            Value right = node->binop.right ? eval(node->binop.right) : (Value){ .type = VAL_NUMBER, .number = 0 };
+            Value right;
+            if (node->binop.right) {
+                right = eval(node->binop.right);
+            } else {
+                right.type = VAL_NUMBER;
+                right.number = 0;
+                right.string = NULL;
+                right.object = NULL;
+            }
 
             /* string concat on + */
             if (node->binop.op && strcmp(node->binop.op, "+") == 0 &&
@@ -826,7 +881,10 @@ static inline Value eval(ASTNode *node) {
                 if (left.type == VAL_STRING) free(left.string);
                 if (right.type == VAL_STRING) free(right.string);
 
-                return (Value){ .type = VAL_STRING, .string = out };
+                Value tmp;
+                tmp.type = VAL_STRING;
+                tmp.string = out;
+                return tmp;
             }
 
             double lnum = (left.type == VAL_NUMBER) ? left.number : strtod(left.string ? left.string : "0", NULL);
@@ -852,17 +910,33 @@ static inline Value eval(ASTNode *node) {
             if (left.type == VAL_STRING) free(left.string);
             if (right.type == VAL_STRING) free(right.string);
 
-            return (Value){ .type = VAL_NUMBER, .number = result };
+            Value tmp;
+            tmp.type = VAL_NUMBER;
+            tmp.number = result;
+            return tmp;
         }
 
         case AST_FUNCTION_CALL: {
             /* builtins */
             if (strcmp(node->funccall.funcname, "len") == 0 && node->funccall.arg_count == 1) {
                 Value a = eval(node->funccall.args[0]);
-                if (a.type != VAL_OBJECT) return (Value){ .type = VAL_NUMBER, .number = 0 };
+                if (a.type != VAL_OBJECT) {
+                    Value tmp;
+                    tmp.type = VAL_NUMBER;
+                    tmp.number = 0;
+                    return tmp;
+                }
                 ObjArray *oa = (ObjArray*)a.object;
-                if (!oa || oa->type != OBJ_ARRAY) return (Value){ .type = VAL_NUMBER, .number = 0 };
-                return (Value){ .type = VAL_NUMBER, .number = (double)oa->count };
+                if (!oa || oa->type != OBJ_ARRAY) {
+                    Value tmp;
+                    tmp.type = VAL_NUMBER;
+                    tmp.number = 0;
+                    return tmp;
+                }
+                Value tmp;
+                tmp.type = VAL_NUMBER;
+                tmp.number = (double)oa->count;
+                return tmp;
             }
 
             if (strcmp(node->funccall.funcname, "append") == 0 && node->funccall.arg_count == 2) {
@@ -880,7 +954,10 @@ static inline Value eval(ASTNode *node) {
                     oa->capacity = newcap;
                 }
                 oa->items[oa->count++] = v;
-                return (Value){ .type = VAL_NUMBER, .number = 1 };
+                Value tmp;
+                tmp.type = VAL_NUMBER;
+                tmp.number = 1;
+                return tmp;
             }
 
             /* native */
@@ -902,8 +979,16 @@ static inline Value eval(ASTNode *node) {
 
             int saved = var_count;
             for (int j = 0; j < func->funcdef.param_count; ++j) {
-                Value av = (j < node->funccall.arg_count) ? eval(node->funccall.args[j])
-                                                         : (Value){ .type = VAL_NUMBER, .number = 0 };
+                Value av;
+                if (j < node->funccall.arg_count) {
+                    av = eval(node->funccall.args[j]);
+                } else {
+                    av.type = VAL_NUMBER;
+                    av.number = 0;
+                    av.string = NULL;
+                    av.object = NULL;
+                }
+
                 if (av.type == VAL_STRING) {
                     set_var(func->funcdef.params[j], VAR_STRING, 0, av.string);
                     free(av.string);
@@ -914,7 +999,9 @@ static inline Value eval(ASTNode *node) {
                 }
             }
 
-            Value result = { .type = VAL_NUMBER, .number = 0 };
+            Value result;
+            result.type = VAL_NUMBER;
+            result.number = 0;
             if (setjmp(return_buf) == 0) {
                 /* interpret body in-place */
                 /* interpret declared later */
@@ -926,7 +1013,10 @@ static inline Value eval(ASTNode *node) {
         }
 
         default:
-            return (Value){ .type = VAL_NUMBER, .number = 0 };
+            Value tmp;
+            tmp.type = VAL_NUMBER;
+            tmp.number = 0;
+            return tmp;
     }
 }
 
