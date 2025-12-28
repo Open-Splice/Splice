@@ -18,6 +18,108 @@
   #include <dlfcn.h>
 #endif
 
+typedef struct {
+    const unsigned char *data;
+    size_t size;
+    size_t pos;
+} SpcMemReader;
+
+static inline unsigned char m_u8(SpcMemReader *r) {
+    if (r->pos >= r->size) error(0, "Unexpected EOF (mem u8)");
+    return r->data[r->pos++];
+}
+
+static inline unsigned short m_u16(SpcMemReader *r) {
+    if (r->pos + 2 > r->size) error(0, "Unexpected EOF (mem u16)");
+    unsigned short v;
+    memcpy(&v, r->data + r->pos, 2);
+    r->pos += 2;
+    return v;
+}
+
+static inline unsigned int m_u32(SpcMemReader *r) {
+    if (r->pos + 4 > r->size) error(0, "Unexpected EOF (mem u32)");
+    unsigned int v;
+    memcpy(&v, r->data + r->pos, 4);
+    r->pos += 4;
+    return v;
+}
+
+static inline double m_double(SpcMemReader *r) {
+    if (r->pos + sizeof(double) > r->size)
+        error(0, "Unexpected EOF (mem double)");
+    double d;
+    memcpy(&d, r->data + r->pos, sizeof(double));
+    r->pos += sizeof(double);
+    return d;
+}
+
+static inline char *m_str(SpcMemReader *r) {
+    unsigned short len = m_u16(r);
+    if (r->pos + len > r->size) error(0, "Unexpected EOF (mem string)");
+    char *s = (char*)malloc(len + 1);
+    memcpy(s, r->data + r->pos, len);
+    r->pos += len;
+    s[len] = 0;
+    return s;
+}
+static ASTNode *read_ast_node_mem(SpcMemReader *r) {
+    unsigned char t = m_u8(r);
+    if (t == AST_NULL_SENTINEL) return NULL;
+
+    ASTNode *n = ast_new((ASTNodeType)t);
+
+    switch (n->type) {
+        case AST_NUMBER:
+            n->number = m_double(r);
+            break;
+
+        case AST_STRING:
+        case AST_IDENTIFIER:
+            n->string = m_str(r);
+            break;
+
+        case AST_BINARY_OP:
+            n->binop.op = m_str(r);
+            n->binop.left  = read_ast_node_mem(r);
+            n->binop.right = read_ast_node_mem(r);
+            break;
+
+        case AST_PRINT:
+            n->print.expr = read_ast_node_mem(r);
+            break;
+
+        case AST_LET:
+        case AST_ASSIGN:
+            n->var.varname = m_str(r);
+            n->var.value   = read_ast_node_mem(r);
+            break;
+
+        case AST_STATEMENTS: {
+            unsigned int c = m_u32(r);
+            n->statements.count = (int)c;
+            n->statements.stmts = (ASTNode**)calloc(c ? c : 1, sizeof(ASTNode*));
+            for (unsigned int i = 0; i < c; i++)
+                n->statements.stmts[i] = read_ast_node_mem(r);
+            break;
+        }
+
+        case AST_FUNCTION_CALL: {
+            n->funccall.funcname = m_str(r);
+            unsigned int ac = m_u32(r);
+            n->funccall.arg_count = (int)ac;
+            n->funccall.args = (ASTNode**)calloc(ac ? ac : 1, sizeof(ASTNode*));
+            for (unsigned int i = 0; i < ac; i++)
+                n->funccall.args[i] = read_ast_node_mem(r);
+            break;
+        }
+
+        default:
+            error(0, "Unsupported AST type in mem reader: %d", n->type);
+    }
+
+    return n;
+}
 
 /* =========================
    Diagnostics
