@@ -1,18 +1,20 @@
-# ----------------------------
-# Splice language definitions
-# ----------------------------
+# =====================================================
+# Splice language overrides (GitHub Linguist)
+# =====================================================
 
 # Splice source files
 *.spl linguist-language=Splice
+*.spl linguist-detectable
 *.spl text
 
-# Splice bytecode files
+# Splice bytecode (generated, binary)
 *.spc linguist-language=Splice
+*.spc linguist-generated
 *.spc binary
 
-# ----------------------------
-# General sanity defaults
-# ----------------------------
+# =====================================================
+# General Git hygiene
+# =====================================================
 
-# Let Git handle line endings automatically
+# Normalize line endings
 * text=auto
