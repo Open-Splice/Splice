@@ -64,10 +64,12 @@ static inline char *m_str(SpcMemReader *r) {
     return s;
 }
 static ASTNode *read_ast_node_mem(SpcMemReader *r) {
-    unsigned char t = m_u8(r);
-    if (t == AST_NULL_SENTINEL) return NULL;
+    unsigned char tag = m_u8(r);
 
-    ASTNode *n = ast_new((ASTNodeType)t);
+    ASTNodeType type = (ASTNodeType)tag;
+    ASTNode *n = ast_new(type);
+    ASTNode *n = ast_new(type);
+
 
     switch (n->type) {
         case AST_NUMBER:
