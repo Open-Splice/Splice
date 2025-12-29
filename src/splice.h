@@ -1209,7 +1209,6 @@ static ASTNode *read_ast_node_mem(SpcMemReader *r) {
 
     ASTNodeType type = (ASTNodeType)tag;
     ASTNode *n = ast_new(type);
-    ASTNode *n = ast_new(type);
 
 
     switch (n->type) {
@@ -1263,5 +1262,24 @@ static ASTNode *read_ast_node_mem(SpcMemReader *r) {
 
     return n;
 }
+static inline ASTNode *read_ast_from_spc_mem(
+    const unsigned char *data,
+    size_t size
+) {
+    if (size < 5) error(0, "Invalid SPC (too small)");
+    if (memcmp(data, SPC_MAGIC, 4) != 0)
+        error(0, "Invalid SPC magic");
+
+    if (data[4] != SPC_VERSION)
+        error(0, "Unsupported SPC version");
+
+    SpcMemReader r;
+    r.data = data;
+    r.size = size;
+    r.pos  = 5;
+
+    return read_ast_node_mem(&r);
+}
+
 
 #endif /* Splice_H */
