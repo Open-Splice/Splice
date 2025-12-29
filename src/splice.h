@@ -109,6 +109,7 @@ typedef enum {
     AST_WRITE,
     AST_RAISE,
     AST_WARN,
+    AST_INPUT,
     AST_INFO,
     AST_WHILE,
     AST_IF,
@@ -143,6 +144,7 @@ struct ASTNode {
         } var;
 
         struct { ASTNode *expr; } print;
+        struct { ASTNode *prompt; } input;
         struct { ASTNode *expr; } raise;
         struct { ASTNode *expr; } warn;
         struct { ASTNode *expr; } info;
@@ -332,6 +334,7 @@ static inline void free_ast(ASTNode *node) {
             break;
 
         case AST_PRINT: free_ast(node->print.expr); break;
+        case AST_INPUT: free_ast(node->input.prompt); break;
         case AST_RAISE: free_ast(node->raise.expr); break;
         case AST_WARN:  free_ast(node->warn.expr);  break;
         case AST_INFO:  free_ast(node->info.expr);  break;
@@ -487,6 +490,7 @@ static void write_ast_node(FILE *f, const ASTNode *n) {
             break;
 
         case AST_PRINT: write_ast_node(f, n->print.expr); break;
+        case AST_INPUT: write_ast_node(f, n->input.prompt); break;
         case AST_RAISE: write_ast_node(f, n->raise.expr); break;
         case AST_WARN:  write_ast_node(f, n->warn.expr);  break;
         case AST_INFO:  write_ast_node(f, n->info.expr);  break;
@@ -597,6 +601,7 @@ static ASTNode *read_ast_node(FILE *f) {
             break;
 
         case AST_PRINT: n->print.expr = read_ast_node(f); break;
+        case AST_INPUT: n->input.prompt = read_ast_node(f); break;
         case AST_RAISE: n->raise.expr = read_ast_node(f); break;
         case AST_WARN:  n->warn.expr  = read_ast_node(f); break;
         case AST_INFO:  n->info.expr  = read_ast_node(f); break;
@@ -847,6 +852,35 @@ static inline Value eval(ASTNode *node) {
             }
             return oa->items[idx];
         }
+        case AST_INPUT: {
+            char *prompt = eval_to_string(node->input.prompt);
+
+            #if SPLICE_HAS_STDIO
+                printf("%s", prompt);
+                fflush(stdout);
+
+                char buf[1024];
+                if (fgets(buf, sizeof(buf), stdin)) {
+                    size_t len = strlen(buf);
+                    if (len && buf[len - 1] == '\n') buf[len - 1] = 0;
+                } else {
+                    buf[0] = 0;
+                }
+
+                free(prompt);
+
+                Value tmp;
+                tmp.type = VAL_STRING;
+                tmp.string = strdup(buf);
+                return tmp;
+            #else
+                free(prompt);
+                Value tmp;
+                tmp.type = VAL_STRING;
+                tmp.string = strdup("");
+                return tmp;
+            #endif
+        }
 
         case AST_INDEX_ASSIGN: {
             if (!node->indexassign.target || node->indexassign.target->type != AST_IDENTIFIER)
@@ -1075,6 +1109,7 @@ static inline void interpret(ASTNode *node) {
             free(s);
             break;
         }
+        
 
         case AST_FUNC_DEF:
             add_func(node->funcdef.funcname, node);

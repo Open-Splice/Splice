@@ -31,7 +31,7 @@ typedef enum {
     TK_NUMBER,
     TK_STRING,
 
-    TK_LET, TK_FUNC, TK_RETURN, TK_PRINT,
+    TK_LET, TK_FUNC, TK_RETURN, TK_PRINT, TK_INPUT,
     TK_READ, TK_WRITE,
     TK_IF, TK_ELSE, TK_WHILE, TK_FOR, TK_IN,
     TK_RAISE,
@@ -149,6 +149,7 @@ static void tokenize(const char *src, TokVec *out) {
             else if (!strcmp(id,"and"))    kw=TK_AND;
             else if (!strcmp(id,"or"))     kw=TK_OR;
             else if (!strcmp(id,"not"))    kw=TK_NOT;
+            else if (!strcmp(id,"input"))  kw=TK_INPUT;
 
             Tok t = { .t=kw, .lex=(kw==TK_IDENT? id : NULL), .line=line };
             if (kw!=TK_IDENT) free(id);
@@ -282,7 +283,14 @@ static ASTNode *parse_primary(void) {
         n->read.expr = e;
         return n;
     }
-
+    if (match(TK_INPUT)) {
+        consume(TK_LPAREN, "Expected '(' after input");
+        ASTNode *e = parse_expression();
+        consume(TK_RPAREN, "Expected ')' after input prompt");
+        ASTNode *n = ast_new(AST_INPUT);
+        n->input.prompt = e;
+        return n;
+    }
     if (match(TK_LBRACKET)) {
         ASTNode **els=NULL;
         int ec=0, cap=0;
