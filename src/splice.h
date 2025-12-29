@@ -17,6 +17,21 @@
 #elif !defined(ARDUINO)
   #include <dlfcn.h>
 #endif
+#ifdef ARDUINO
+  #define SPLICE_HAS_STDIO 0
+#else
+  #define SPLICE_HAS_STDIO 1
+#endif
+#if SPLICE_HAS_STDIO
+  #include <stdio.h>
+#endif
+
+#ifdef ARDUINO
+#define SPLICE_EMBED 1
+#else
+#define SPLICE_EMBED 0
+#endif
+
 
 
 
@@ -675,6 +690,7 @@ static ASTNode *read_ast_node(FILE *f) {
 }
 
 /* Public: builder helper */
+#if !SPLICE_EMBED
 static inline int write_ast_to_spc(const char *out_file, const ASTNode *root) {
     FILE *f = fopen(out_file, "wb");
     if (!f) return 0;
@@ -686,8 +702,10 @@ static inline int write_ast_to_spc(const char *out_file, const ASTNode *root) {
     fclose(f);
     return 1;
 }
+#endif
 
 /* Public: VM helper */
+#if !SPLICE_EMBED
 static inline ASTNode *read_ast_from_spc(const char *filename) {
     FILE *f = fopen(filename, "rb");
     if (!f) { error(0, "Could not open bytecode file: %s", filename); return NULL; }
@@ -703,6 +721,7 @@ static inline ASTNode *read_ast_from_spc(const char *filename) {
     fclose(f);
     return root;
 }
+#endif
 
 /* =========================
    Runtime eval/interpret
@@ -720,7 +739,7 @@ static inline Value eval(ASTNode *node) {
     switch (node->type) {
         case AST_READ: {
             char *path = eval_to_string(node->read.expr);
-
+#ifndef SPLICE_EMBED
             FILE *f = fopen(path, "rb");
             if (!f) {
                 free(path);
@@ -746,6 +765,13 @@ static inline Value eval(ASTNode *node) {
             tmp.type = VAL_STRING;
             tmp.string = buf;
             return tmp;
+#else
+            free(path);
+            Value tmp;
+            tmp.type = VAL_STRING;
+            tmp.string = strdup("");
+            return tmp;
+#endif
         }
 
         case AST_NUMBER: {
@@ -1096,6 +1122,7 @@ static inline void interpret(ASTNode *node) {
                 out = strdup(buf);
             }
 
+#ifndef SPLICE_EMBED
             FILE *f = fopen(path.string, "wb");
             if (!f) {
                 free(path.string);
@@ -1105,6 +1132,7 @@ static inline void interpret(ASTNode *node) {
 
             fwrite(out, 1, strlen(out), f);
             fclose(f);
+#endif
 
             free(path.string);
             if (val.type == VAL_STRING) free(val.string);
