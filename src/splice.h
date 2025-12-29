@@ -17,7 +17,8 @@
 #elif !defined(ARDUINO)
   #include <dlfcn.h>
 #endif
-
+static inline void error(int ln, const char *fmt, ...);
+typedef struct ASTNode ASTNode;
 typedef struct {
     const unsigned char *data;
     size_t size;
