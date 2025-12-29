@@ -3,8 +3,12 @@
 
 #include <stdlib.h>
 #include <string.h>
-#include <stdio.h>
 #include <ctype.h>   // tolower, isspace
+#ifdef ARDUINO
+  #define SPLICE_EMBED 1
+#else
+  #define SPLICE_EMBED 0
+#endif
 
 /* ============================================================
    Value forward declaration (from Splice.h)
@@ -17,18 +21,20 @@ typedef struct Value Value;
    ============================================================ */
 typedef Value (*SpliceCFunc)(int argc, Value *argv);
 
+#if !SPLICE_EMBED
+
+/* ============================================================
+   Desktop / full native support
+   ============================================================ */
+
 typedef struct {
-    char *name;       // normalized name
+    char *name;
     SpliceCFunc func;
 } SpliceCFuncEntry;
 
-/* ============================================================
-   Globals (ONE copy across all .c files)
-   ============================================================ */
 #define MAX_NATIVE_FUNCS 16
 #define MAX_MODULES      8
 
-// Declare as extern by default
 extern SpliceCFuncEntry Splice_native_funcs[MAX_NATIVE_FUNCS];
 extern int Splice_native_func_count;
 
@@ -44,11 +50,7 @@ static inline char *Splice_normalize_name(const char *raw) {
     size_t len = strlen(raw);
     while (len > 0 && isspace((unsigned char)raw[len-1])) len--;
 
-#ifdef __cplusplus
-    char *clean = new char[len + 1];
-#else
     char *clean = (char*)malloc(len + 1);
-#endif
     for (size_t j = 0; j < len; j++)
         clean[j] = (char)tolower((unsigned char)raw[j]);
     clean[len] = '\0';
@@ -69,26 +71,14 @@ static inline void Splice_register_native(const char *name, SpliceCFunc func) {
 
 static inline SpliceCFunc Splice_get_native(const char *name) {
     char *clean = Splice_normalize_name(name);
-
     for (int i = 0; i < Splice_native_func_count; i++) {
-
-
         if (strcmp(Splice_native_funcs[i].name, clean) == 0) {
             SpliceCFunc fn = Splice_native_funcs[i].func;
-#ifdef __cplusplus
-            delete[] clean;
-#else
             free(clean);
-#endif
             return fn;
         }
     }
-
-#ifdef __cplusplus
-    delete[] clean;
-#else
     free(clean);
-#endif
     return NULL;
 }
 
@@ -113,5 +103,32 @@ int Splice_native_func_count = 0;
 SpliceModuleInit Splice_modules[MAX_MODULES];
 int Splice_module_count = 0;
 #endif
+
+#else  /* ================= SPLICE_EMBED ================= */
+
+/* ============================================================
+   Embedded stubs (NO natives, NO modules)
+   ============================================================ */
+
+/* Keep API surface so VM compiles unchanged */
+
+static inline void Splice_register_native(const char *name, SpliceCFunc func) {
+    (void)name; (void)func;
+}
+
+static inline SpliceCFunc Splice_get_native(const char *name) {
+    (void)name;
+    return NULL;
+}
+
+static inline void Splice_register_module(void (*init)(void)) {
+    (void)init;
+}
+
+static inline void Splice_init_all_modules(void) {
+    /* nothing */
+}
+
+#endif /* SPLICE_EMBED */
 
 #endif /* SDK_H */
