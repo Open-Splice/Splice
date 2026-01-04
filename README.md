@@ -2,7 +2,7 @@
 
 <img src="SpliceLogo.png">
 
-The Current Version of Splice is: 1.0.0
+
 
 <tr>
     <td>
@@ -73,3 +73,5 @@ Splice is orginized in this manner
 | -                 | -                                                                  |
 | `src/`            | Code to run the SPVM (Splice Virtual Machine) onto systems like Microcontrollers                         |
 | `examples/`        | Example code that works with Splice                                              |
+| `test/`     | A Directory for Where CodeQL and Github CI Test Splice |
+| `bin/` | A Directory where compiled versions of Splice stay. Contents only exist when you install Splice for your system |

@@ -33,6 +33,16 @@
 #endif
 
 
+#define MAX_IMPORTS 32
+
+static char *imported_files[MAX_IMPORTS];
+static int imported_count = 0;
+
+
+
+
+
+
 
 
 /* =========================
@@ -283,7 +293,15 @@ static inline void set_var(const char *name, VarType type, double value, const c
     vars[var_count].str   = (type == VAR_STRING) ? strdup(str ? str : "") : NULL;
     var_count++;
 }
+/* =========================
+   Forward declarations
+   ========================= */
 
+static inline ASTNode *ast_new(ASTNodeType t);
+static inline void free_ast(ASTNode *node);
+static ASTNode *clone_ast(const ASTNode *n);
+
+static inline void interpret(ASTNode *node);
 #define MAX_FUNCS 16
 typedef struct { char *name; ASTNode *def; } Func;
 static Func funcs[MAX_FUNCS];
@@ -302,7 +320,156 @@ static inline ASTNode *get_func(const char *name) {
         if (strcmp(funcs[j].name, name) == 0) return funcs[j].def;
     return NULL;
 }
+static int already_imported(const char *path) {
+    if (imported_count >= MAX_IMPORTS)
+        error(0, "too many imports");
 
+    for (int i = 0; i < imported_count; i++) {
+        if (strcmp(imported_files[i], path) == 0)
+            return 1;
+    }
+    return 0;
+}
+
+static ASTNode *clone_ast(const ASTNode *n) {
+    if (!n) return NULL;
+
+    ASTNode *c = ast_new(n->type);
+
+    switch (n->type) {
+
+        case AST_NUMBER:
+            c->number = n->number;
+            break;
+
+        case AST_STRING:
+        case AST_IDENTIFIER:
+            c->string = n->string ? strdup(n->string) : NULL;
+            break;
+
+        case AST_BINARY_OP:
+            c->binop.op = strdup(n->binop.op);
+            c->binop.left  = clone_ast(n->binop.left);
+            c->binop.right = clone_ast(n->binop.right);
+            break;
+
+        case AST_LET:
+        case AST_ASSIGN:
+            c->var.varname = strdup(n->var.varname);
+            c->var.value   = clone_ast(n->var.value);
+            break;
+
+        case AST_PRINT:
+            c->print.expr = clone_ast(n->print.expr);
+            break;
+
+        case AST_INPUT:
+            c->input.prompt = clone_ast(n->input.prompt);
+            break;
+
+        case AST_RAISE:
+            c->raise.expr = clone_ast(n->raise.expr);
+            break;
+
+        case AST_WARN:
+            c->warn.expr = clone_ast(n->warn.expr);
+            break;
+
+        case AST_INFO:
+            c->info.expr = clone_ast(n->info.expr);
+            break;
+
+        case AST_READ:
+            c->read.expr = clone_ast(n->read.expr);
+            break;
+
+        case AST_WRITE:
+            c->write.path  = clone_ast(n->write.path);
+            c->write.value = clone_ast(n->write.value);
+            break;
+
+        case AST_WHILE:
+            c->whilestmt.cond = clone_ast(n->whilestmt.cond);
+            c->whilestmt.body = clone_ast(n->whilestmt.body);
+            break;
+
+        case AST_IF:
+            c->ifstmt.condition   = clone_ast(n->ifstmt.condition);
+            c->ifstmt.then_branch = clone_ast(n->ifstmt.then_branch);
+            c->ifstmt.else_branch = clone_ast(n->ifstmt.else_branch);
+            break;
+
+        case AST_STATEMENTS:
+            c->statements.count = n->statements.count;
+            c->statements.stmts =
+                (ASTNode**)calloc(c->statements.count, sizeof(ASTNode*));
+            for (int i = 0; i < c->statements.count; i++)
+                c->statements.stmts[i] =
+                    clone_ast(n->statements.stmts[i]);
+            break;
+
+        case AST_FUNC_DEF:
+            c->funcdef.funcname = strdup(n->funcdef.funcname);
+            c->funcdef.param_count = n->funcdef.param_count;
+            c->funcdef.params =
+                (char**)calloc(c->funcdef.param_count, sizeof(char*));
+            for (int i = 0; i < c->funcdef.param_count; i++)
+                c->funcdef.params[i] =
+                    strdup(n->funcdef.params[i]);
+            c->funcdef.body = clone_ast(n->funcdef.body);
+            break;
+
+        case AST_FUNCTION_CALL:
+            c->funccall.funcname = strdup(n->funccall.funcname);
+            c->funccall.arg_count = n->funccall.arg_count;
+            c->funccall.args =
+                (ASTNode**)calloc(c->funccall.arg_count, sizeof(ASTNode*));
+            for (int i = 0; i < c->funccall.arg_count; i++)
+                c->funccall.args[i] =
+                    clone_ast(n->funccall.args[i]);
+            break;
+
+        case AST_RETURN:
+            c->retstmt.expr = clone_ast(n->retstmt.expr);
+            break;
+
+        case AST_IMPORT:
+            c->importstmt.filename = strdup(n->importstmt.filename);
+            break;
+
+        case AST_FOR:
+            c->forstmt.for_var   = strdup(n->forstmt.for_var);
+            c->forstmt.for_start = clone_ast(n->forstmt.for_start);
+            c->forstmt.for_end   = clone_ast(n->forstmt.for_end);
+            c->forstmt.for_body  = clone_ast(n->forstmt.for_body);
+            break;
+
+        case AST_ARRAY_LITERAL:
+            c->arraylit.count = n->arraylit.count;
+            c->arraylit.elements =
+                (ASTNode**)calloc(c->arraylit.count, sizeof(ASTNode*));
+            for (int i = 0; i < c->arraylit.count; i++)
+                c->arraylit.elements[i] =
+                    clone_ast(n->arraylit.elements[i]);
+            break;
+
+        case AST_INDEX_EXPR:
+            c->indexexpr.target = clone_ast(n->indexexpr.target);
+            c->indexexpr.index  = clone_ast(n->indexexpr.index);
+            break;
+
+        case AST_INDEX_ASSIGN:
+            c->indexassign.target = clone_ast(n->indexassign.target);
+            c->indexassign.index  = clone_ast(n->indexassign.index);
+            c->indexassign.value  = clone_ast(n->indexassign.value);
+            break;
+
+        default:
+            error(0, "clone_ast: unsupported AST node %d", n->type);
+    }
+
+    return c;
+}
 /* =========================
    AST alloc/free
    ========================= */
@@ -694,20 +861,7 @@ static ASTNode *read_ast_node(FILE *f) {
     return n;
 }
 
-/* Public: builder helper */
-#if !SPLICE_EMBED
-static inline int write_ast_to_spc(const char *out_file, const ASTNode *root) {
-    FILE *f = fopen(out_file, "wb");
-    if (!f) return 0;
 
-    fwrite(SPC_MAGIC, 1, 4, f);
-    w_u8(f, (unsigned char)SPC_VERSION);
-
-    write_ast_node(f, root);
-    fclose(f);
-    return 1;
-}
-#endif
 
 /* Public: VM helper */
 #if !SPLICE_EMBED
@@ -1066,8 +1220,7 @@ static inline Value eval(ASTNode *node) {
             result.type = VAL_NUMBER;
             result.number = 0;
             if (setjmp(return_buf) == 0) {
-                /* interpret body in-place */
-                /* interpret declared later */
+                interpret(func->funcdef.body);
             } else {
                 result = return_value;
             }
@@ -1098,10 +1251,41 @@ static inline void interpret(ASTNode *node) {
     if (!node) return;
 
     switch (node->type) {
-        case AST_STATEMENTS:
-            for (int j = 0; j < node->statements.count; ++j)
-                interpret(node->statements.stmts[j]);
+        case AST_STATEMENTS: {
+            for (int j = 0; j < node->statements.count; ++j) {
+                ASTNode *s = node->statements.stmts[j];
+                if (s && s->type == AST_FUNC_DEF)
+                    add_func(s->funcdef.funcname, clone_ast(s));
+
+            }
+            for (int j = 0; j < node->statements.count; ++j) {
+                ASTNode *s = node->statements.stmts[j];
+                if (!s || s->type == AST_FUNC_DEF) continue;
+                interpret(s);
+            }
             break;
+        }
+
+        case AST_IMPORT: {
+            #if !SPLICE_EMBED
+                const char *path = node->importstmt.filename;
+
+                if (already_imported(path)) {
+                    break; // already loaded
+                }
+
+                ASTNode *mod = read_ast_from_spc(path);
+                if (!mod) error(0, "import failed: %s", path);
+
+                imported_files[imported_count++] = strdup(path);
+
+                interpret(mod);   // executes + registers funcs
+                free_ast(mod);
+            #else
+                error(0, "import not supported on embedded builds");
+            #endif
+                break;
+        }
 
         case AST_PRINT: {
             char *s = eval_to_string(node->print.expr);
@@ -1112,7 +1296,8 @@ static inline void interpret(ASTNode *node) {
         
 
         case AST_FUNC_DEF:
-            add_func(node->funcdef.funcname, node);
+            add_func(node->funcdef.funcname, clone_ast(node));
+
             break;
 
         case AST_RETURN:

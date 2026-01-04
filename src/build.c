@@ -3,8 +3,128 @@
 #include <string.h>
 #include <ctype.h>
 
-#include "splice.h"  /* uses AST types + write_ast_to_spc */
+  /* uses AST types + write_ast_to_spc */
+typedef struct ASTNode ASTNode;
+#define SPC_MAGIC "SPC"
+#define SPC_VERSION 1
+#define AST_NULL_SENTINEL 0xFF
+typedef enum {
+    AST_NUMBER = 0,
+    AST_STRING,
+    AST_IDENTIFIER,
+    AST_BINARY_OP,
+    AST_LET,
+    AST_ASSIGN,
+    AST_PRINT,
+    AST_READ,
+    AST_WRITE,
+    AST_RAISE,
+    AST_WARN,
+    AST_INPUT,
+    AST_INFO,
+    AST_WHILE,
+    AST_IF,
+    AST_STATEMENTS,
+    AST_FUNC_DEF,
+    AST_FUNCTION_CALL,
+    AST_RETURN,
+    AST_IMPORT,
+    AST_FOR,
+    AST_ARRAY_LITERAL,
+    AST_INDEX_EXPR,
+    AST_INDEX_ASSIGN
+} ASTNodeType;
+struct ASTNode {
+    ASTNodeType type;
+    union {
+        double number;
+        char *string;
 
+        struct {
+            char *op;       /* "+", "-", "*", "/", "==", "&&", "!" ... */
+            ASTNode *left;
+            ASTNode *right; /* may be NULL for unary */
+        } binop;
+
+        struct {
+            char *varname;
+            ASTNode *value;
+        } var;
+
+        struct { ASTNode *expr; } print;
+        struct { ASTNode *prompt; } input;
+        struct { ASTNode *expr; } raise;
+        struct { ASTNode *expr; } warn;
+        struct { ASTNode *expr; } info;
+        struct { ASTNode *expr; } read;
+        struct { ASTNode *path; ASTNode *value; } write;
+
+
+        struct { ASTNode *cond; ASTNode *body; } whilestmt;
+
+        struct {
+            ASTNode *condition;
+            ASTNode *then_branch;
+            ASTNode *else_branch; /* may be NULL */
+        } ifstmt;
+
+        struct {
+            ASTNode **stmts;
+            int count;
+        } statements;
+
+        struct {
+            char *funcname;
+            char **params;
+            int param_count;
+            ASTNode *body;
+        } funcdef;
+
+        struct {
+            char *funcname;
+            ASTNode **args;
+            int arg_count;
+        } funccall;
+
+        struct { ASTNode *expr; } retstmt;
+
+        struct { char *filename; } importstmt;
+
+        struct {
+            char *for_var;
+            ASTNode *for_start;
+            ASTNode *for_end;
+            ASTNode *for_body;
+        } forstmt;
+
+        struct {
+            ASTNode **elements;
+            int count;
+        } arraylit;
+
+        struct {
+            ASTNode *target;
+            ASTNode *index;
+        } indexexpr;
+
+        struct {
+            ASTNode *target;
+            ASTNode *index;
+            ASTNode *value;
+        } indexassign;
+    };
+};
+static inline int write_ast_to_spc(const char *out_file, const ASTNode *root) {
+    FILE *f = fopen(out_file, "wb");
+    if (!f) return 0;
+
+    fwrite(SPC_MAGIC, 1, 4, f);
+    w_u8(f, (unsigned char)SPC_VERSION);
+
+    write_ast_node(f, root);
+    fclose(f);
+    return 1;
+}
 /* =========================
    Read whole file
    ========================= */
@@ -45,7 +165,7 @@ typedef enum {
     TK_DOT,
 
     TK_ASSIGN,      /* = */
-    TK_PLUS, TK_MINUS, TK_STAR, TK_SLASH,
+    TK_PLUS, TK_MINUS, TK_STAR, TK_SLASH, TK_IMPORT,
 
     TK_LT, TK_GT, TK_LE, TK_GE, TK_EQ, TK_NEQ
 } TokType;
@@ -150,6 +270,7 @@ static void tokenize(const char *src, TokVec *out) {
             else if (!strcmp(id,"or"))     kw=TK_OR;
             else if (!strcmp(id,"not"))    kw=TK_NOT;
             else if (!strcmp(id,"input"))  kw=TK_INPUT;
+            else if (!strcmp(id,"import")) kw=TK_IMPORT;
 
             Tok t = { .t=kw, .lex=(kw==TK_IDENT? id : NULL), .line=line };
             if (kw!=TK_IDENT) free(id);
@@ -432,7 +553,12 @@ static ASTNode *parse_statement(void) {
         n->print.expr = e;
         return n;
     }
-
+    if (match(TK_IMPORT)) {
+        Tok *f = consume(TK_STRING, "Expected string filename after import");
+        ASTNode *n = ast_new(AST_IMPORT);
+        n->importstmt.filename = strdup(f->lex ? f->lex : "");
+        return n;
+    }
     if (match(TK_WRITE)) {
         consume(TK_LPAREN, "Expected '(' after write");
         ASTNode *path = parse_expression();
