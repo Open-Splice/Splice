@@ -2,8 +2,6 @@
 
 <img src="SpliceLogo.png">
 
-
-
 <tr>
     <td>
         <a href="https://github.com/sinhateam"><img src='https://img.shields.io/badge/A Sinha-Product-blue.svg'/></a>
