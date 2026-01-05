@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+
 #include "splice.h"
   /* uses AST types + write_ast_to_spc */
 
@@ -16,6 +17,29 @@ static inline int write_ast_to_spc(const char *out_file, const ASTNode *root) {
     fclose(f);
     return 1;
 }
+static const char *resolve_builtin_import(const char *name) {
+#ifdef _WIN32
+    const char *prefix = "C:\\Program Files\\Splice\\";
+#else
+    const char *prefix = "/usr/local/bin/";
+#endif
+
+    if (strcmp(name, "math") == 0) {
+        static char path[256];
+        snprintf(path, sizeof(path), "%ssplib/math.spc", prefix);
+        return path;
+    }
+
+    if (strcmp(name, "io") == 0) {
+        static char path[256];
+        snprintf(path, sizeof(path), "%ssplib/io.spc", prefix);
+        return path;
+    }
+
+    return name; /* fallback: user-provided path */
+}
+
+
 /* =========================
    Read whole file
    ========================= */
@@ -446,10 +470,16 @@ static ASTNode *parse_statement(void) {
     }
     if (match(TK_IMPORT)) {
         Tok *f = consume(TK_STRING, "Expected string filename after import");
+
         ASTNode *n = ast_new(AST_IMPORT);
-        n->importstmt.filename = strdup(f->lex ? f->lex : "");
+
+        const char *raw = f->lex ? f->lex : "";
+        const char *resolved = resolve_builtin_import(raw);
+
+        n->importstmt.filename = strdup(resolved);
         return n;
     }
+
     if (match(TK_WRITE)) {
         consume(TK_LPAREN, "Expected '(' after write");
         ASTNode *path = parse_expression();

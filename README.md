@@ -16,7 +16,7 @@
 
 [![Gitter chat](https://badges.gitter.im/gitterHQ/gitter.png)](https://app.gitter.im/#/room/#splice:gitter.im)
 
-[![CodeQL](https://github.com/Open-Splice/Splice/actions/workflows/codeql.yml/badge.svg)](https://github.com/OpenSplice/Splice/actions/workflows/codeql.yml)
+[![CodeQL](https://github.com/Open-Splice/Splice/actions/workflows/codeql.yml/badge.svg)](https://github.com/Open-Splice/Splice/actions/workflows/codeql.yml)
 
 # The Splice Programming Language
 

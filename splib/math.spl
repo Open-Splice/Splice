@@ -1,0 +1,157 @@
+// ==============================
+// Splice Math Standard Library
+// ==============================
+
+// ---- constants ----
+let pi  = 3.141592653589793;
+let e   = 2.718281828459045;
+let tau = 6.283185307179586;
+
+// ---- basic helpers ----
+func abs(x) {
+    if (x < 0) {
+        return -x;
+    };
+    return x;
+};
+
+func min(a, b) {
+    if (a < b) {
+        return a;
+    };
+    return b;
+};
+
+func max(a, b) {
+    if (a > b) {
+        return a;
+    };
+    return b;
+};
+
+func round(x) {
+    if (x >= 0) {
+        return int(x + 0.5);
+    };
+    return int(x - 0.5);
+};
+
+// ---- powers & roots (native) ----
+func pow(x, y) {
+    native pow(x, y);
+};
+
+func sqrt(x) {
+    native sqrt(x);
+};
+
+func exp(x) {
+    native exp(x);
+};
+
+func log(x) {
+    native log(x);
+};
+
+func log10(x) {
+    native log10(x);
+};
+
+func log2(x) {
+    native log2(x);
+};
+
+// ---- trigonometry (native) ----
+func sin(x) {
+    native sin(x);
+};
+
+func cos(x) {
+    native cos(x);
+};
+
+func tan(x) {
+    native tan(x);
+};
+
+func asin(x) {
+    native asin(x);
+};
+
+func acos(x) {
+    native acos(x);
+};
+
+func atan(x) {
+    native atan(x);
+};
+
+func atan2(y, x) {
+    native atan2(y, x);
+};
+
+// ---- angle conversion ----
+func radians(deg) {
+    return deg * (pi / 180);
+};
+
+func degrees(rad) {
+    return rad * (180 / pi);
+};
+
+// ---- rounding helpers (native) ----
+func floor(x) {
+    native floor(x);
+};
+
+func ceil(x) {
+    native ceil(x);
+};
+
+func trunc(x) {
+    native trunc(x);
+};
+
+// ---- number theory ----
+func gcd(a, b) {
+    a = abs(a);
+    b = abs(b);
+
+    if (a == 0) {
+        return b;
+    };
+    if (b == 0) {
+        return a;
+    };
+
+    while (a != b) {
+        if (a > b) {
+            a = a - b;
+        } else {
+            b = b - a;
+        };
+    };
+
+    return a;
+};
+
+func lcm(a, b) {
+    return abs(a * b) / gcd(a, b);
+};
+
+func factorial(n) {
+    if (n < 0) {
+        raise ("factorial: negative value");
+    };
+
+    let r = 1;
+    while (n > 1) {
+        r = r * n;
+        n = n - 1;
+    };
+
+    return r;
+};
+
+
+

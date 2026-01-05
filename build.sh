@@ -53,6 +53,7 @@ else
     if [[ "$OS" == "linux" || "$OS" == "darwin" ]]; then
         sudo cp "$BIN_DIR/Splice" "$INSTALL_DIR/splice"
         sudo cp "$BIN_DIR/spbuild" "$INSTALL_DIR/spbuild"
+        sudo cp -r "splib" "$INSTALL_DIR/splib"
     elif [[ "$OS" == mingw* || "$OS" == cygwin* ]]; then
         if [[ "$OS" == mingw* || "$OS" == msys* || "$OS" == cygwin* ]]; then
             SPLICE_OUT="$BIN_DIR/Splice.exe"

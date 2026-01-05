@@ -236,10 +236,16 @@ static Var vars[32];
 static int var_count = 0;
 
 static inline Var *get_var(const char *name) {
-    for (int j = 0; j < var_count; ++j)
-        if (strcmp(vars[j].name, name) == 0) return &vars[j];
+    if (!name) return NULL;
+
+    for (int j = 0; j < var_count; ++j) {
+        if (!vars[j].name) continue;
+        if (strcmp(vars[j].name, name) == 0)
+            return &vars[j];
+    }
     return NULL;
 }
+
 
 static inline void free_object(void *obj) {
     if (!obj) return;
@@ -254,16 +260,24 @@ static inline void free_object(void *obj) {
 }
 
 static inline void set_var_object(const char *name, void *obj) {
+    if (!name)
+        error(0, "set_var_object called with NULL name");
+
     for (int j = 0; j < var_count; ++j) {
+        if (!vars[j].name) continue;
+
         if (strcmp(vars[j].name, name) == 0) {
-            if (vars[j].type == VAR_OBJECT) free_object(vars[j].obj);
+            if (vars[j].type == VAR_OBJECT)
+                free_object(vars[j].obj);
             vars[j].type = VAR_OBJECT;
             vars[j].obj = obj;
-            free(vars[j].str); vars[j].str = NULL;
+            free(vars[j].str);
+            vars[j].str = NULL;
             vars[j].value = 0;
             return;
         }
     }
+
     vars[var_count].name = strdup(name);
     vars[var_count].type = VAR_OBJECT;
     vars[var_count].obj  = obj;
@@ -272,8 +286,20 @@ static inline void set_var_object(const char *name, void *obj) {
     var_count++;
 }
 
-static inline void set_var(const char *name, VarType type, double value, const char *str) {
+
+static inline void set_var(
+    const char *name,
+    VarType type,
+    double value,
+    const char *str
+) {
+    if (!name) {
+        error(0, "set_var: NULL variable name");
+    }
+
     for (int j = 0; j < var_count; ++j) {
+        if (!vars[j].name) continue;
+
         if (strcmp(vars[j].name, name) == 0) {
             vars[j].type = type;
             if (type == VAR_STRING) {
@@ -287,12 +313,15 @@ static inline void set_var(const char *name, VarType type, double value, const c
             return;
         }
     }
+
     vars[var_count].name = strdup(name);
     vars[var_count].type = type;
     vars[var_count].value = (type == VAR_NUMBER) ? value : 0;
     vars[var_count].str   = (type == VAR_STRING) ? strdup(str ? str : "") : NULL;
     var_count++;
 }
+
+
 /* =========================
    Forward declarations
    ========================= */
@@ -302,34 +331,41 @@ static inline void free_ast(ASTNode *node);
 static ASTNode *clone_ast(const ASTNode *n);
 
 static inline void interpret(ASTNode *node);
-#define MAX_FUNCS 16
+#define MAX_FUNCS 32
 typedef struct { char *name; ASTNode *def; } Func;
 static Func funcs[MAX_FUNCS];
 static int  func_count = 0;
 
 static inline void add_func(const char *name, ASTNode *def) {
-    for (int j = 0; j < func_count; ++j)
-        if (strcmp(funcs[j].name, name) == 0) { funcs[j].def = def; return; }
+    if (!name) {
+        error(0, "add_func: NULL function name");
+    }
+
+    for (int j = 0; j < func_count; ++j) {
+        if (!funcs[j].name) continue;
+        if (strcmp(funcs[j].name, name) == 0) {
+            funcs[j].def = def;
+            return;
+        }
+    }
+
     funcs[func_count].name = strdup(name);
     funcs[func_count].def  = def;
     func_count++;
 }
 
+
 static inline ASTNode *get_func(const char *name) {
-    for (int j = 0; j < func_count; ++j)
-        if (strcmp(funcs[j].name, name) == 0) return funcs[j].def;
+    if (!name) return NULL;
+
+    for (int j = 0; j < func_count; ++j) {
+        if (!funcs[j].name) continue;
+        if (strcmp(funcs[j].name, name) == 0)
+            return funcs[j].def;
+    }
     return NULL;
 }
-static int already_imported(const char *path) {
-    if (imported_count >= MAX_IMPORTS)
-        error(0, "too many imports");
 
-    for (int i = 0; i < imported_count; i++) {
-        if (strcmp(imported_files[i], path) == 0)
-            return 1;
-    }
-    return 0;
-}
 
 static ASTNode *clone_ast(const ASTNode *n) {
     if (!n) return NULL;
@@ -470,6 +506,19 @@ static ASTNode *clone_ast(const ASTNode *n) {
 
     return c;
 }
+static int already_imported(const char *path) {
+    if (!path) {
+        error(0, "already_imported: NULL path");
+    }
+
+    for (int i = 0; i < imported_count; i++) {
+        if (!imported_files[i]) continue;
+        if (strcmp(imported_files[i], path) == 0)
+            return 1;
+    }
+    return 0;
+}
+
 /* =========================
    AST alloc/free
    ========================= */
@@ -1207,11 +1256,16 @@ static inline Value eval(ASTNode *node) {
                 }
 
                 if (av.type == VAL_STRING) {
+
+
+
                     set_var(func->funcdef.params[j], VAR_STRING, 0, av.string);
                     free(av.string);
                 } else if (av.type == VAL_OBJECT) {
                     set_var_object(func->funcdef.params[j], av.object);
                 } else {
+
+
                     set_var(func->funcdef.params[j], VAR_NUMBER, av.number, NULL);
                 }
             }
@@ -1309,11 +1363,15 @@ static inline void interpret(ASTNode *node) {
         case AST_ASSIGN: {
             Value val = eval(node->var.value);
             if (val.type == VAL_STRING) {
+
+
                 set_var(node->var.varname, VAR_STRING, 0, val.string);
                 free(val.string);
             } else if (val.type == VAL_OBJECT) {
                 set_var_object(node->var.varname, val.object);
             } else {
+
+
                 set_var(node->var.varname, VAR_NUMBER, val.number, NULL);
             }
             break;
@@ -1367,14 +1425,20 @@ static inline void interpret(ASTNode *node) {
             break;
 
         case AST_FOR: {
-            int start = (int)eval(node->forstmt.for_start).number;
-            int end   = (int)eval(node->forstmt.for_end).number;
-            for (int k = start; k <= end; ++k) {
-                set_var(node->forstmt.for_var, VAR_NUMBER, k, NULL);
-                interpret(node->forstmt.for_body);
-            }
-            break;
+        if (!node->forstmt.for_var) {
+            error(0, "for-loop variable name is NULL");
         }
+
+        int start = (int)eval(node->forstmt.for_start).number;
+        int end   = (int)eval(node->forstmt.for_end).number;
+
+        for (int k = start; k <= end; ++k) {
+            set_var(node->forstmt.for_var, VAR_NUMBER, k, NULL);
+            interpret(node->forstmt.for_body);
+        }
+        break;
+    }
+
 
         case AST_FUNCTION_CALL:
         case AST_ARRAY_LITERAL:
