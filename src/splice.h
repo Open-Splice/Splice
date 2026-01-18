@@ -1197,7 +1197,16 @@ static inline Value eval(ASTNode *node) {
             if (!node->indexassign.target || node->indexassign.target->type != AST_IDENTIFIER)
                 error(0, "index assign: target must be identifier");
 
-            Var *v = get_var(node->indexassign.target->string);
+            VarSlot *slot = get_var(node->indexassign.target->string);
+            double d = slot ? slot->value : 0.0;
+
+            Var *v = malloc(sizeof(Var));
+            v->name = NULL;
+            v->type = VAR_NUMBER;
+            v->value = d;
+            v->str = NULL;
+            v->obj = NULL;
+
             if (!v || v->type != VAR_OBJECT) error(0, "index assign: variable is not array");
 
             ObjArray *oa = (ObjArray*)v->obj;
