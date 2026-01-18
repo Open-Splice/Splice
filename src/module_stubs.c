@@ -1,11 +1,3 @@
-/* Minimal module stubs for Splice runtime
- * This file is intentionally small: it registers a tiny example native
- * function and ensures module initializers are invoked at program
- * startup. Real native modules can be added by providing additional
- * init functions that call Splice_register_native() or by providing
- * Splice_register_module_<name> symbols which are looked up by the
- * import mechanism in `splice.h`.
- */
 
 #include "splice.h"
 #include <stdlib.h>

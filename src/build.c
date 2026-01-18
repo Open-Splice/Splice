@@ -5,6 +5,13 @@
 
 #include "splice.h"
   /* uses AST types + write_ast_to_spc */
+ASTNode* ast_tuple(ASTNode** items, int count) {
+    ASTNode* node = malloc(sizeof(ASTNode));
+    node->type = AST_TUPLE;
+    node->tuple.items = items;
+    node->tuple.count = count;
+    return node;
+}
 
 static inline int write_ast_to_spc(const char *out_file, const ASTNode *root) {
     FILE *f = fopen(out_file, "wb");
@@ -306,10 +313,39 @@ static ASTNode *parse_primary(void) {
     }
 
     if (match(TK_LPAREN)) {
-        ASTNode *e = parse_expression();
+        ASTNode *first = parse_expression();
+
+        /* tuple if comma appears */
+        if (match(TK_COMMA)) {
+            ASTNode **items = NULL;
+            int count = 0, cap = 0;
+
+            /* first element */
+            cap = 4;
+            items = (ASTNode**)malloc(sizeof(ASTNode*) * cap);
+            items[count++] = first;
+
+            do {
+                if (count >= cap) {
+                    cap *= 2;
+                    items = (ASTNode**)realloc(items, sizeof(ASTNode*) * cap);
+                }
+                items[count++] = parse_expression();
+            } while (match(TK_COMMA));
+
+            consume(TK_RPAREN, "Expected ')' after tuple");
+
+            ASTNode *t = ast_new(AST_TUPLE);
+            t->tuple.items = items;
+            t->tuple.count = count;
+            return t;
+        }
+
+        /* otherwise normal grouping */
         consume(TK_RPAREN, "Expected ')'");
-        return e;
+        return first;
     }
+
     if (match(TK_READ)) {
         consume(TK_LPAREN, "Expected '(' after read");
         ASTNode *e = parse_expression();
