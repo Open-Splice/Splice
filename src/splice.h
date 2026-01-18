@@ -1102,34 +1102,32 @@ static inline Value eval(ASTNode *node) {
 
         case AST_IDENTIFIER: {
             VarSlot *slot = get_var(node->string);
-            double d = slot ? slot->value : 0.0;
-            Var *v = var_number(d);   // or make_number_var(d)
 
-
-            if (!v) {
-                Value tmp;
-                tmp.type = VAL_NUMBER;
-                tmp.number = 0;
+            if (!slot) {
+                Value tmp = { .type = VAL_NUMBER, .number = 0 };
                 return tmp;
             }
 
-            if (v->type == VAR_STRING) {
+            if (slot->type == VAR_STRING) {
                 Value tmp;
                 tmp.type = VAL_STRING;
-                tmp.string = strdup(v->str ? v->str : "");
+                tmp.string = strdup(slot->str ? slot->str : "");
                 return tmp;
             }
-            if (v->type == VAR_OBJECT) {
+
+            if (slot->type == VAR_OBJECT) {
                 Value tmp;
                 tmp.type = VAL_OBJECT;
-                tmp.object = v->obj;
+                tmp.object = slot->obj;
                 return tmp;
             }
+
             Value tmp;
             tmp.type = VAL_NUMBER;
-            tmp.number = v->value;
+            tmp.number = slot->value;
             return tmp;
         }
+
 
         case AST_ARRAY_LITERAL: {
             ObjArray *oa = (ObjArray*)calloc(1, sizeof(ObjArray));
@@ -1200,16 +1198,11 @@ static inline Value eval(ASTNode *node) {
             VarSlot *slot = get_var(node->indexassign.target->string);
             double d = slot ? slot->value : 0.0;
 
-            Var *v = malloc(sizeof(Var));
-            v->name = NULL;
-            v->type = VAR_NUMBER;
-            v->value = d;
-            v->str = NULL;
-            v->obj = NULL;
+            if (!slot || slot->type != VAR_OBJECT)
+                error(0, "index assign: variable is not array");
 
-            if (!v || v->type != VAR_OBJECT) error(0, "index assign: variable is not array");
 
-            ObjArray *oa = (ObjArray*)v->obj;
+            ObjArray *oa = (ObjArray*)slot->obj;
             if (oa->type == OBJ_TUPLE) {
                 error(0, "cannot assign to tuple (immutable)");
             }
