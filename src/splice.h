@@ -264,6 +264,15 @@ static inline unsigned hash_str(const char *s) {
     }
     return h;
 }
+static inline Var* var_number(double d) {
+    Var *v = malloc(sizeof(Var));
+    v->name = NULL;
+    v->type = VAR_NUMBER;
+    v->value = d;
+    v->str = NULL;
+    v->obj = NULL;
+    return v;
+}
 
 
 static inline VarSlot *get_var(const char *name) {
