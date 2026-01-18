@@ -1092,7 +1092,11 @@ static inline Value eval(ASTNode *node) {
         }
 
         case AST_IDENTIFIER: {
-            Var *v = get_var(node->string);
+            VarSlot *slot = get_var(node->string);
+            double d = slot ? slot->value : 0.0;
+            Var *v = var_number(d);   // or make_number_var(d)
+
+
             if (!v) {
                 Value tmp;
                 tmp.type = VAL_NUMBER;
