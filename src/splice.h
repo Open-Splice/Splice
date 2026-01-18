@@ -93,7 +93,11 @@ typedef struct Value {
     void *object;
 } Value;
 
-typedef enum { OBJ_ARRAY } ObjectType;
+typedef enum {
+    OBJ_ARRAY,
+    OBJ_TUPLE
+} ObjectType;
+
 typedef struct {
     ObjectType type;
     int count;
@@ -107,6 +111,7 @@ typedef struct {
 /* =========================
    AST
    ========================= */
+
 typedef enum {
     AST_NUMBER = 0,
     AST_STRING,
@@ -123,6 +128,7 @@ typedef enum {
     AST_INFO,
     AST_WHILE,
     AST_IF,
+    AST_TUPLE,
     AST_STATEMENTS,
     AST_FUNC_DEF,
     AST_FUNCTION_CALL,
@@ -147,7 +153,10 @@ struct ASTNode {
             ASTNode *left;
             ASTNode *right; /* may be NULL for unary */
         } binop;
-
+        struct {
+            ASTNode** items;
+            int count;
+        } tuple;
         struct {
             char *varname;
             ASTNode *value;
@@ -216,7 +225,10 @@ struct ASTNode {
         } indexassign;
     };
 };
-
+typedef struct {
+    ASTNode** items;
+    int count;
+} ASTTuple;
 /* =========================
    Env (vars + funcs)
    ========================= */
@@ -232,19 +244,48 @@ typedef struct {
     void  *obj;
 } Var;
 
-static Var vars[32];
-static int var_count = 0;
+#define VAR_TABLE_SIZE 256   /* power of 2 = fast modulo */
 
-static inline Var *get_var(const char *name) {
+typedef struct {
+    char   *name;   /* interned or strdup */
+    VarType type;
+    double value;
+    char   *str;
+    void   *obj;
+    int     used;
+} VarSlot;
+
+static VarSlot var_table[VAR_TABLE_SIZE];
+static inline unsigned hash_str(const char *s) {
+    unsigned h = 2166136261u;
+    while (*s) {
+        h ^= (unsigned char)*s++;
+        h *= 16777619u;
+    }
+    return h;
+}
+
+
+static inline VarSlot *get_var(const char *name) {
     if (!name) return NULL;
 
-    for (int j = 0; j < var_count; ++j) {
-        if (!vars[j].name) continue;
-        if (strcmp(vars[j].name, name) == 0)
-            return &vars[j];
+    unsigned h = hash_str(name);
+    unsigned idx = h & (VAR_TABLE_SIZE - 1);
+
+    for (unsigned i = 0; i < VAR_TABLE_SIZE; i++) {
+        VarSlot *v = &var_table[idx];
+
+        if (!v->used)
+            return NULL; /* empty slot = not found */
+
+        if (strcmp(v->name, name) == 0)
+            return v;
+
+        idx = (idx + 1) & (VAR_TABLE_SIZE - 1); /* linear probe */
     }
     return NULL;
 }
+
 
 
 static inline void free_object(void *obj) {
@@ -260,31 +301,35 @@ static inline void free_object(void *obj) {
 }
 
 static inline void set_var_object(const char *name, void *obj) {
-    if (!name)
-        error(0, "set_var_object called with NULL name");
+    if (!name) error(0, "set_var_object: NULL name");
 
-    for (int j = 0; j < var_count; ++j) {
-        if (!vars[j].name) continue;
+    unsigned h = hash_str(name);
+    unsigned idx = h & (VAR_TABLE_SIZE - 1);
 
-        if (strcmp(vars[j].name, name) == 0) {
-            if (vars[j].type == VAR_OBJECT)
-                free_object(vars[j].obj);
-            vars[j].type = VAR_OBJECT;
-            vars[j].obj = obj;
-            free(vars[j].str);
-            vars[j].str = NULL;
-            vars[j].value = 0;
+    for (;;) {
+        VarSlot *v = &var_table[idx];
+
+        if (!v->used) {
+            v->used = 1;
+            v->name = strdup(name);
+            v->type = VAR_OBJECT;
+            v->obj  = obj;
+            v->str  = NULL;
+            v->value = 0;
             return;
         }
-    }
 
-    vars[var_count].name = strdup(name);
-    vars[var_count].type = VAR_OBJECT;
-    vars[var_count].obj  = obj;
-    vars[var_count].value = 0;
-    vars[var_count].str = NULL;
-    var_count++;
+        if (strcmp(v->name, name) == 0) {
+            if (v->type == VAR_STRING) free(v->str);
+            v->type = VAR_OBJECT;
+            v->obj  = obj;
+            return;
+        }
+
+        idx = (idx + 1) & (VAR_TABLE_SIZE - 1);
+    }
 }
+
 
 
 static inline void set_var(
@@ -293,33 +338,36 @@ static inline void set_var(
     double value,
     const char *str
 ) {
-    if (!name) {
-        error(0, "set_var: NULL variable name");
-    }
+    if (!name) error(0, "set_var: NULL name");
 
-    for (int j = 0; j < var_count; ++j) {
-        if (!vars[j].name) continue;
+    unsigned h = hash_str(name);
+    unsigned idx = h & (VAR_TABLE_SIZE - 1);
 
-        if (strcmp(vars[j].name, name) == 0) {
-            vars[j].type = type;
-            if (type == VAR_STRING) {
-                free(vars[j].str);
-                vars[j].str = strdup(str ? str : "");
-            } else {
-                vars[j].value = value;
-                free(vars[j].str);
-                vars[j].str = NULL;
-            }
+    for (;;) {
+        VarSlot *v = &var_table[idx];
+
+        if (!v->used) {
+            v->used = 1;
+            v->name = strdup(name);
+            v->type = type;
+            v->value = value;
+            v->str = (type == VAR_STRING) ? strdup(str ? str : "") : NULL;
+            v->obj = NULL;
             return;
         }
-    }
 
-    vars[var_count].name = strdup(name);
-    vars[var_count].type = type;
-    vars[var_count].value = (type == VAR_NUMBER) ? value : 0;
-    vars[var_count].str   = (type == VAR_STRING) ? strdup(str ? str : "") : NULL;
-    var_count++;
+        if (strcmp(v->name, name) == 0) {
+            if (v->type == VAR_STRING) free(v->str);
+            v->type = type;
+            v->value = value;
+            v->str = (type == VAR_STRING) ? strdup(str ? str : "") : NULL;
+            return;
+        }
+
+        idx = (idx + 1) & (VAR_TABLE_SIZE - 1);
+    }
 }
+
 
 
 /* =========================
@@ -536,6 +584,11 @@ static inline void free_ast(ASTNode *node) {
         case AST_IDENTIFIER:
             free(node->string);
             break;
+        case AST_TUPLE:
+            for (int i = 0; i < node->tuple.count; i++)
+                free_ast(node->tuple.items[i]);
+            free(node->tuple.items);
+            break;
 
         case AST_BINARY_OP:
             free(node->binop.op);
@@ -699,6 +752,11 @@ static void write_ast_node(FILE *f, const ASTNode *n) {
         case AST_READ:
             write_ast_node(f, n->read.expr);
             break;
+        case AST_TUPLE:
+            w_u32(f, (unsigned int)n->tuple.count);
+            for (int i = 0; i < n->tuple.count; i++)
+                write_ast_node(f, n->tuple.items[i]);
+            break;
 
         case AST_WRITE:
             write_ast_node(f, n->write.path);
@@ -804,6 +862,15 @@ static ASTNode *read_ast_node(FILE *f) {
         case AST_NUMBER:
             n->number = r_double(f);
             break;
+        case AST_TUPLE: {
+            unsigned int c = r_u32(f);
+            n->tuple.count = (int)c;
+            n->tuple.items =
+                (ASTNode**)calloc(c ? c : 1, sizeof(ASTNode*));
+            for (unsigned int i = 0; i < c; i++)
+                n->tuple.items[i] = read_ast_node(f);
+            break;
+        }
 
         case AST_STRING:
         case AST_IDENTIFIER:
@@ -934,6 +1001,16 @@ static inline ASTNode *read_ast_from_spc(const char *filename) {
 /* =========================
    Runtime eval/interpret
    ========================= */
+static inline void print_value(Value v) {
+    if (v.type == VAL_STRING) {
+        printf("%s\n", v.string ? v.string : "");
+    } else if (v.type == VAL_NUMBER) {
+        printf("%g\n", v.number);
+    } else {
+        printf("<object>\n");
+    }
+}
+
 static inline char *eval_to_string(ASTNode *node);
 
 static inline Value eval(ASTNode *node) {
@@ -987,6 +1064,24 @@ static inline Value eval(ASTNode *node) {
             tmp.type = VAL_NUMBER;
             tmp.number = node->number;
             return tmp;
+        }
+        case AST_TUPLE: {
+            ObjArray *oa = (ObjArray*)calloc(1, sizeof(ObjArray));
+            if (!oa) error(0, "OOM tuple");
+
+            oa->type = OBJ_TUPLE;
+            oa->count = node->tuple.count;
+            oa->capacity = node->tuple.count;
+            oa->items =
+                (Value*)calloc((size_t)(oa->capacity ? oa->capacity : 1), sizeof(Value));
+
+            for (int i = 0; i < node->tuple.count; i++)
+                oa->items[i] = eval(node->tuple.items[i]);
+
+            Value v;
+            v.type = VAL_OBJECT;
+            v.object = oa;
+            return v;
         }
 
         case AST_STRING: {
@@ -1093,6 +1188,10 @@ static inline Value eval(ASTNode *node) {
             if (!v || v->type != VAR_OBJECT) error(0, "index assign: variable is not array");
 
             ObjArray *oa = (ObjArray*)v->obj;
+            if (oa->type == OBJ_TUPLE) {
+                error(0, "cannot assign to tuple (immutable)");
+            }
+
             int idx = (int)eval(node->indexassign.index).number;
             Value val = eval(node->indexassign.value);
 
@@ -1210,7 +1309,12 @@ static inline Value eval(ASTNode *node) {
                 Value v = eval(node->funccall.args[1]);
                 if (a.type != VAL_OBJECT) error(0, "append: first arg must be array");
                 ObjArray *oa = (ObjArray*)a.object;
-                if (!oa || oa->type != OBJ_ARRAY) error(0, "append: not an array");
+                if (!oa) error(0, "append: invalid object");
+                if (oa->type == OBJ_TUPLE)
+                    error(0, "append: cannot modify tuple (immutable)");
+                if (oa->type != OBJ_ARRAY)
+                    error(0, "append: not an array");
+
 
                 if (oa->count >= oa->capacity) {
                     int newcap = oa->capacity ? oa->capacity * 2 : 4;
@@ -1243,7 +1347,6 @@ static inline Value eval(ASTNode *node) {
             ASTNode *func = get_func(node->funccall.funcname);
             if (!func) error(0, "Undefined function: %s", node->funccall.funcname);
 
-            int saved = var_count;
             for (int j = 0; j < func->funcdef.param_count; ++j) {
                 Value av;
                 if (j < node->funccall.arg_count) {
@@ -1278,7 +1381,7 @@ static inline Value eval(ASTNode *node) {
             } else {
                 result = return_value;
             }
-            var_count = saved;
+
             return result;
         }
 
@@ -1291,13 +1394,80 @@ static inline Value eval(ASTNode *node) {
     }
 }
 
+static inline void sb_ensure(char **buf, size_t *cap, size_t need) {
+    if (need <= *cap) return;
+    while (*cap < need) *cap *= 2;
+    *buf = (char*)realloc(*buf, *cap);
+    if (!*buf) error(0, "OOM stringify");
+}
+
+static inline char *value_item_to_tmp(Value v, char tmp[128]) {
+    if (v.type == VAL_STRING) {
+        /* quoted strings */
+        snprintf(tmp, 128, "\"%s\"", v.string ? v.string : "");
+        return tmp;
+    }
+    if (v.type == VAL_NUMBER) {
+        snprintf(tmp, 128, "%g", v.number);
+        return tmp;
+    }
+    return "<object>";
+}
+
 static inline char *eval_to_string(ASTNode *node) {
     Value v = eval(node);
-    if (v.type == VAL_STRING) return v.string;
+
+    if (v.type == VAL_STRING) {
+        /* caller owns it */
+        return v.string;
+    }
+
+    if (v.type == VAL_OBJECT) {
+        ObjArray *oa = (ObjArray*)v.object;
+        if (!oa) return strdup("<null>");
+
+        if (oa->type == OBJ_ARRAY || oa->type == OBJ_TUPLE) {
+            /* build string */
+            size_t cap = 128;
+            size_t len = 0;
+            char *out = (char*)malloc(cap);
+            if (!out) error(0, "OOM stringify");
+
+            char open = (oa->type == OBJ_TUPLE) ? '(' : '[';
+            char close = (oa->type == OBJ_TUPLE) ? ')' : ']';
+
+            out[len++] = open;
+
+            for (int i = 0; i < oa->count; i++) {
+                char tmp[128];
+                const char *s = value_item_to_tmp(oa->items[i], tmp);
+
+                size_t sl = strlen(s);
+                sb_ensure(&out, &cap, len + sl + 4);
+                memcpy(out + len, s, sl);
+                len += sl;
+
+                if (i + 1 < oa->count) {
+                    out[len++] = ',';
+                    out[len++] = ' ';
+                }
+            }
+
+            out[len++] = close;
+            out[len] = 0;
+            return out;
+        }
+
+        return strdup("<object>");
+    }
+
+    /* number */
     char buf[64];
     snprintf(buf, sizeof(buf), "%g", v.number);
     return strdup(buf);
 }
+
+
 
 static inline void interpret(ASTNode *node);
 
@@ -1309,7 +1479,8 @@ static inline void interpret(ASTNode *node) {
             for (int j = 0; j < node->statements.count; ++j) {
                 ASTNode *s = node->statements.stmts[j];
                 if (s && s->type == AST_FUNC_DEF)
-                    add_func(s->funcdef.funcname, clone_ast(s));
+                    add_func(s->funcdef.funcname, s);
+
 
             }
             for (int j = 0; j < node->statements.count; ++j) {
@@ -1342,10 +1513,10 @@ static inline void interpret(ASTNode *node) {
         }
 
         case AST_PRINT: {
-            char *s = eval_to_string(node->print.expr);
-            printf("%s\n", s);
-            free(s);
-            break;
+            Value v = eval(node->print.expr);
+            print_value(v);
+            if (v.type == VAL_STRING) free(v.string);
+
         }
         
 

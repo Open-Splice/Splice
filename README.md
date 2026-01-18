@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="SpliceLogo.png">
+<img src="SpliceLogo.png" class="width;1">
 
 <tr>
     <td>

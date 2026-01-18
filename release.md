@@ -1,7 +1,8 @@
 # Release notes
 
-Current Version: 1.0
+Current Version: 1.1 Beta
 
 ## Overview
 
-This Version of Splice Made it so now the ast Dce and all of the building is done in spbuild so vm can be use in a esp32
+* Major bug fixes
+* Added MAX_FUNCS **(Set 16 for embedded and 32 for Normal PC as functions excedding MAX_FUNCS cause Segmentation fault)**
