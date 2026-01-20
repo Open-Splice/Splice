@@ -310,7 +310,7 @@ static inline void free_object(void *obj) {
 }
 
 static inline void set_var_object(const char *name, void *obj) {
-    if (!name) error(0, "set_var_object: NULL name");
+    if (!name) error(0, "Splice/NullError set_var_object: NULL name");
 
     unsigned h = hash_str(name);
     unsigned idx = h & (VAR_TABLE_SIZE - 1);
@@ -347,7 +347,7 @@ static inline void set_var(
     double value,
     const char *str
 ) {
-    if (!name) error(0, "set_var: NULL name");
+    if (!name) error(0, "Splice/NullError set_var: NULL name");
 
     unsigned h = hash_str(name);
     unsigned idx = h & (VAR_TABLE_SIZE - 1);
@@ -390,38 +390,64 @@ static ASTNode *clone_ast(const ASTNode *n);
 static inline void interpret(ASTNode *node);
 #define MAX_FUNCS 32
 typedef struct { char *name; ASTNode *def; } Func;
-static Func funcs[MAX_FUNCS];
-static int  func_count = 0;
+#define FUNC_TABLE_SIZE 128
+
+typedef struct {
+    char *name;
+    ASTNode *def;
+    int used;
+} FuncSlot;
+
+static FuncSlot func_table[FUNC_TABLE_SIZE];
+
 
 static inline void add_func(const char *name, ASTNode *def) {
-    if (!name) {
-        error(0, "add_func: NULL function name");
-    }
+    if (!name) error(0, "Splice/NullError add_func: NULL name");
 
-    for (int j = 0; j < func_count; ++j) {
-        if (!funcs[j].name) continue;
-        if (strcmp(funcs[j].name, name) == 0) {
-            funcs[j].def = def;
+    unsigned idx = hash_str(name) & (FUNC_TABLE_SIZE - 1);
+
+    for (;;) {
+        FuncSlot *f = &func_table[idx];
+
+        if (!f->used) {
+            f->used = 1;
+            f->name = strdup(name);
+            f->def  = def;
             return;
         }
-    }
 
-    funcs[func_count].name = strdup(name);
-    funcs[func_count].def  = def;
-    func_count++;
+        if (strcmp(f->name, name) == 0) {
+            f->def = def;   // overwrite allowed
+            return;
+        }
+
+        idx = (idx + 1) & (FUNC_TABLE_SIZE - 1);
+    }
 }
+
 
 
 static inline ASTNode *get_func(const char *name) {
     if (!name) return NULL;
 
-    for (int j = 0; j < func_count; ++j) {
-        if (!funcs[j].name) continue;
-        if (strcmp(funcs[j].name, name) == 0)
-            return funcs[j].def;
+    unsigned idx = hash_str(name) & (FUNC_TABLE_SIZE - 1);
+
+    for (unsigned i = 0; i < FUNC_TABLE_SIZE; i++) {
+        FuncSlot *f = &func_table[idx];
+
+        if (!f->used)
+            return NULL;
+
+        if (strcmp(f->name, name) == 0)
+            return f->def;
+
+        idx = (idx + 1) & (FUNC_TABLE_SIZE - 1);
     }
+
     return NULL;
 }
+
+
 
 
 static ASTNode *clone_ast(const ASTNode *n) {
@@ -558,30 +584,32 @@ static ASTNode *clone_ast(const ASTNode *n) {
             break;
 
         default:
-            error(0, "clone_ast: unsupported AST node %d", n->type);
+            error(0, "Splice/VMError clone_ast: unsupported AST node %d", n->type);
     }
 
     return c;
 }
-static int already_imported(const char *path) {
-    if (!path) {
-        error(0, "already_imported: NULL path");
-    }
-
-    for (int i = 0; i < imported_count; i++) {
-        if (!imported_files[i]) continue;
-        if (strcmp(imported_files[i], path) == 0)
-            return 1;
-    }
-    return 0;
+static int strcmp_ptr(const void *a, const void *b) {
+    return strcmp(*(char**)a, *(char**)b);
 }
+
+static int already_imported(const char *path) {
+    return bsearch(
+        &path,
+        imported_files,
+        imported_count,
+        sizeof(char*),
+        strcmp_ptr
+    ) != NULL;
+}
+
 
 /* =========================
    AST alloc/free
    ========================= */
 static inline ASTNode *ast_new(ASTNodeType t) {
     ASTNode *n = (ASTNode*)calloc(1, sizeof(ASTNode));
-    if (!n) error(0, "OOM allocating ASTNode");
+    if (!n) error(0, "Splice/SystemError OOM allocating ASTNode");
     n->type = t;
     return n;
 }
@@ -692,49 +720,49 @@ static inline void free_ast(ASTNode *node) {
 #define AST_NULL_SENTINEL 0xFF
 
 static inline void w_u8(FILE *f, unsigned char v) {
-    if (fputc(v, f) == EOF) error(0, "write u8 failed");
+    if (fputc(v, f) == EOF) error(0, "Splice/SystemError write u8 failed");
 }
 static inline void w_u32(FILE *f, unsigned int v) {
-    if (fwrite(&v, 4, 1, f) != 1) error(0, "write u32 failed");
+    if (fwrite(&v, 4, 1, f) != 1) error(0, "Splice/SystemError write u32 failed");
 }
 static inline void w_u16(FILE *f, unsigned short v) {
-    if (fwrite(&v, 2, 1, f) != 1) error(0, "write u16 failed");
+    if (fwrite(&v, 2, 1, f) != 1) error(0, "Splice/SystemError write u16 failed");
 }
 static inline void w_double(FILE *f, double d) {
-    if (fwrite(&d, sizeof(double), 1, f) != 1) error(0, "write double failed");
+    if (fwrite(&d, sizeof(double), 1, f) != 1) error(0, "Splice/SystemError write double failed");
 }
 static inline void w_str(FILE *f, const char *s) {
     if (!s) s = "";
     unsigned short len = (unsigned short)strlen(s);
     w_u16(f, len);
-    if (len && fwrite(s, 1, len, f) != len) error(0, "write string failed");
+    if (len && fwrite(s, 1, len, f) != len) error(0, "Splice/SystemError write string failed");
 }
 
 static inline unsigned char r_u8(FILE *f) {
     int c = fgetc(f);
-    if (c == EOF) error(0, "Unexpected EOF (u8)");
+    if (c == EOF) error(0, "Splice/SyntaxError Unexpected EOF (u8)");
     return (unsigned char)c;
 }
 static inline unsigned int r_u32(FILE *f) {
     unsigned int v;
-    if (fread(&v, 4, 1, f) != 1) error(0, "Unexpected EOF (u32)");
+    if (fread(&v, 4, 1, f) != 1) error(0, "Splice/SyntaxError Unexpected EOF (u32)");
     return v;
 }
 static inline unsigned short r_u16(FILE *f) {
     unsigned short v;
-    if (fread(&v, 2, 1, f) != 1) error(0, "Unexpected EOF (u16)");
+    if (fread(&v, 2, 1, f) != 1) error(0, "Splice/SyntaxError Unexpected EOF (u16)");
     return v;
 }
 static inline double r_double(FILE *f) {
     double d;
-    if (fread(&d, sizeof(double), 1, f) != 1) error(0, "Unexpected EOF (double)");
+    if (fread(&d, sizeof(double), 1, f) != 1) error(0, "Splice/SyntaxError Unexpected EOF (double)");
     return d;
 }
 static inline char *r_str(FILE *f) {
     unsigned short len = r_u16(f);
     char *s = (char*)malloc((size_t)len + 1);
     if (!s) error(0, "OOM reading string");
-    if (len && fread(s, 1, len, f) != len) error(0, "Unexpected EOF (string)");
+    if (len && fread(s, 1, len, f) != len) error(0, "Splice/SyntaxError Unexpected EOF (string)");
     s[len] = 0;
     return s;
 }
@@ -845,7 +873,7 @@ static void write_ast_node(FILE *f, const ASTNode *n) {
             break;
 
         default:
-            error(0, "write_ast_node: unsupported type %d", (int)n->type);
+            error(0, "Splice/SystemError write_ast_node: unsupported type %d", (int)n->type);
     }
 }
 
@@ -930,7 +958,7 @@ static ASTNode *read_ast_node(FILE *f) {
             unsigned int count = r_u32(f);
             n->arraylit.count = (int)count;
             n->arraylit.elements = (ASTNode**)calloc(count ? count : 1, sizeof(ASTNode*));
-            if (!n->arraylit.elements) error(0, "OOM arraylit elements");
+            if (!n->arraylit.elements) error(0, "Splice/SystemError OOM arraylit elements");
             for (unsigned int i = 0; i < count; ++i) n->arraylit.elements[i] = read_ast_node(f);
             break;
         }
@@ -951,7 +979,7 @@ static ASTNode *read_ast_node(FILE *f) {
             unsigned int pc = r_u32(f);
             n->funcdef.param_count = (int)pc;
             n->funcdef.params = (char**)calloc(pc ? pc : 1, sizeof(char*));
-            if (!n->funcdef.params) error(0, "OOM func params");
+            if (!n->funcdef.params) error(0, "Splice/SystemError OOM func params");
             for (unsigned int i = 0; i < pc; ++i) n->funcdef.params[i] = r_str(f);
             n->funcdef.body = read_ast_node(f);
             break;
@@ -962,7 +990,7 @@ static ASTNode *read_ast_node(FILE *f) {
             unsigned int ac = r_u32(f);
             n->funccall.arg_count = (int)ac;
             n->funccall.args = (ASTNode**)calloc(ac ? ac : 1, sizeof(ASTNode*));
-            if (!n->funccall.args) error(0, "OOM funccall args");
+            if (!n->funccall.args) error(0, "Splice/SystemError OOM funccall args");
             for (unsigned int i = 0; i < ac; ++i) n->funccall.args[i] = read_ast_node(f);
             break;
         }
@@ -971,7 +999,7 @@ static ASTNode *read_ast_node(FILE *f) {
             unsigned int c = r_u32(f);
             n->statements.count = (int)c;
             n->statements.stmts = (ASTNode**)calloc(c ? c : 1, sizeof(ASTNode*));
-            if (!n->statements.stmts) error(0, "OOM statements");
+            if (!n->statements.stmts) error(0, "Splice/SystemError OOM statements");
             for (unsigned int i = 0; i < c; ++i) n->statements.stmts[i] = read_ast_node(f);
             break;
         }
@@ -981,7 +1009,7 @@ static ASTNode *read_ast_node(FILE *f) {
             break;
 
         default:
-            error(0, "read_ast_node: unknown type %d", (int)type);
+            error(0, "Splice/SystemError read_ast_node: unknown type %d", (int)type);
     }
     return n;
 }
@@ -992,15 +1020,14 @@ static ASTNode *read_ast_node(FILE *f) {
 #if !SPLICE_EMBED
 static inline ASTNode *read_ast_from_spc(const char *filename) {
     FILE *f = fopen(filename, "rb");
-    if (!f) { error(0, "Could not open bytecode file: %s", filename); return NULL; }
+    if (!f) { error(0, "Splice/SPCError Could not open bytecode file: %s", filename); return NULL; }
 
     char magic[5] = {0};
-    if (fread(magic, 1, 4, f) != 4) error(0, "Invalid SPC (short)");
-    if (memcmp(magic, SPC_MAGIC, 4) != 0) error(0, "Invalid SPC magic");
+    if (fread(magic, 1, 4, f) != 4) error(0, "Splice/SPCError Invalid SPC (short)");
+    if (memcmp(magic, SPC_MAGIC, 4) != 0) error(0, "Splice/SPCError Invalid SPC magic");
 
     unsigned char ver = r_u8(f);
-    if (ver != SPC_VERSION) error(0, "Unsupported SPC version: %u", ver);
-
+    if (ver != SPC_VERSION) error(0, "Splice/SPCError Unsupported SPC version: %u", ver);
     ASTNode *root = read_ast_node(f);
     fclose(f);
     return root;
@@ -1048,7 +1075,7 @@ static inline Value eval(ASTNode *node) {
             rewind(f);
 
             char *buf = (char*)malloc(size + 1);
-            if (!buf) error(0, "OOM in read()");
+            if (!buf) error(0, "Splice/SystemError OOM in read()");
             fread(buf, 1, size, f);
             buf[size] = 0;
 
@@ -1076,7 +1103,7 @@ static inline Value eval(ASTNode *node) {
         }
         case AST_TUPLE: {
             ObjArray *oa = (ObjArray*)calloc(1, sizeof(ObjArray));
-            if (!oa) error(0, "OOM tuple");
+            if (!oa) error(0, "Splice/SystemError OOM tuple");
 
             oa->type = OBJ_TUPLE;
             oa->count = node->tuple.count;
@@ -1131,12 +1158,12 @@ static inline Value eval(ASTNode *node) {
 
         case AST_ARRAY_LITERAL: {
             ObjArray *oa = (ObjArray*)calloc(1, sizeof(ObjArray));
-            if (!oa) error(0, "OOM array");
+            if (!oa) error(0, "Splice/SystemError OOM array");
             oa->type = OBJ_ARRAY;
             oa->count = node->arraylit.count;
             oa->capacity = node->arraylit.count;
             oa->items = (Value*)calloc((size_t)(oa->capacity ? oa->capacity : 1), sizeof(Value));
-            if (!oa->items) error(0, "OOM array items");
+            if (!oa->items) error(0, "Splice/SystemError OOM array items");
             for (int j = 0; j < node->arraylit.count; ++j) oa->items[j] = eval(node->arraylit.elements[j]);
             Value tmp;
             tmp.type = VAL_OBJECT;
@@ -1149,9 +1176,9 @@ static inline Value eval(ASTNode *node) {
             Value idxv   = eval(node->indexexpr.index);
             int idx = (int)idxv.number;
 
-            if (target.type != VAL_OBJECT) error(0, "index: target is not array");
+            if (target.type != VAL_OBJECT) error(0, "Splice/IndexError index: target is not array");
             ObjArray *oa = (ObjArray*)target.object;
-            if (!oa || oa->type != OBJ_ARRAY) error(0, "index: not an array");
+            if (!oa || oa->type != OBJ_ARRAY) error(0, "Splice/IndexError index: not an array");
 
             if (idx < 0 || idx >= oa->count) {
                 Value tmp;
@@ -1193,29 +1220,29 @@ static inline Value eval(ASTNode *node) {
 
         case AST_INDEX_ASSIGN: {
             if (!node->indexassign.target || node->indexassign.target->type != AST_IDENTIFIER)
-                error(0, "index assign: target must be identifier");
+                error(0, "Splice/IndexError index assign: target must be identifier");
 
             VarSlot *slot = get_var(node->indexassign.target->string);
             double d = slot ? slot->value : 0.0;
 
             if (!slot || slot->type != VAR_OBJECT)
-                error(0, "index assign: variable is not array");
+                error(0, "Splice/IndexError index assign: variable is not array");
 
 
             ObjArray *oa = (ObjArray*)slot->obj;
             if (oa->type == OBJ_TUPLE) {
-                error(0, "cannot assign to tuple (immutable)");
+                error(0, "Splice/TypeError cannot assign to tuple (immutable)");
             }
 
             int idx = (int)eval(node->indexassign.index).number;
             Value val = eval(node->indexassign.value);
 
-            if (idx < 0) error(0, "index assign: negative index");
+            if (idx < 0) error(0, "Splice/IndexError index assign: negative index");
             if (idx >= oa->count) {
                 while (idx >= oa->capacity) {
                     int newcap = oa->capacity ? oa->capacity * 2 : 4;
                     Value *ni = (Value*)realloc(oa->items, sizeof(Value) * (size_t)newcap);
-                    if (!ni) error(0, "OOM realloc array");
+                    if (!ni) error(0, "Splice/SystemError OOM realloc array");
                     oa->items = ni;
                     oa->capacity = newcap;
                 }
@@ -1254,7 +1281,7 @@ static inline Value eval(ASTNode *node) {
                 const char *rs = (right.type == VAL_STRING) ? right.string : (snprintf(rb, sizeof(rb), "%g", right.number), rb);
 
                 char *out = (char*)malloc(strlen(ls) + strlen(rs) + 1);
-                if (!out) error(0, "OOM concat");
+                if (!out) error(0, "Splice/SystemError OOM concat");
                 strcpy(out, ls);
                 strcat(out, rs);
 
@@ -1322,19 +1349,18 @@ static inline Value eval(ASTNode *node) {
             if (strcmp(node->funccall.funcname, "append") == 0 && node->funccall.arg_count == 2) {
                 Value a = eval(node->funccall.args[0]);
                 Value v = eval(node->funccall.args[1]);
-                if (a.type != VAL_OBJECT) error(0, "append: first arg must be array");
+                if (a.type != VAL_OBJECT) error(0, "Splice/ArrayError append: first arg must be array");
                 ObjArray *oa = (ObjArray*)a.object;
-                if (!oa) error(0, "append: invalid object");
+                if (!oa) error(0, "Splice/ArrayError append: invalid object");
                 if (oa->type == OBJ_TUPLE)
-                    error(0, "append: cannot modify tuple (immutable)");
+                    error(0, "Splice/ArrayError append: cannot modify tuple (immutable)");
                 if (oa->type != OBJ_ARRAY)
-                    error(0, "append: not an array");
-
+                    error(0, "Splice/ArrayError append: not an array");
 
                 if (oa->count >= oa->capacity) {
                     int newcap = oa->capacity ? oa->capacity * 2 : 4;
                     Value *ni = (Value*)realloc(oa->items, sizeof(Value) * (size_t)newcap);
-                    if (!ni) error(0, "OOM append realloc");
+                    if (!ni) error(0, "Splice/SystemError OOM append realloc");
                     oa->items = ni;
                     oa->capacity = newcap;
                 }
@@ -1349,7 +1375,7 @@ static inline Value eval(ASTNode *node) {
             SpliceCFunc native = Splice_get_native(node->funccall.funcname);
             if (native) {
                 Value *args = (Value*)malloc(sizeof(Value) * (size_t)node->funccall.arg_count);
-                if (!args) error(0, "OOM native args");
+                if (!args) error(0, "Splice/SystemError OOM native args");
                 for (int j = 0; j < node->funccall.arg_count; ++j) args[j] = eval(node->funccall.args[j]);
                 Value r = native(node->funccall.arg_count, args);
                 for (int j = 0; j < node->funccall.arg_count; ++j)
@@ -1360,7 +1386,7 @@ static inline Value eval(ASTNode *node) {
 
             /* user-defined */
             ASTNode *func = get_func(node->funccall.funcname);
-            if (!func) error(0, "Undefined function: %s", node->funccall.funcname);
+            if (!func) error(0, "Splice/SyntaxError Undefined function: %s", node->funccall.funcname);
 
             for (int j = 0; j < func->funcdef.param_count; ++j) {
                 Value av;
@@ -1413,7 +1439,7 @@ static inline void sb_ensure(char **buf, size_t *cap, size_t need) {
     if (need <= *cap) return;
     while (*cap < need) *cap *= 2;
     *buf = (char*)realloc(*buf, *cap);
-    if (!*buf) error(0, "OOM stringify");
+    if (!*buf) error(0, "Splice/SystemError OOM stringify");
 }
 
 static inline char *value_item_to_tmp(Value v, char tmp[128]) {
@@ -1446,7 +1472,7 @@ static inline char *eval_to_string(ASTNode *node) {
             size_t cap = 128;
             size_t len = 0;
             char *out = (char*)malloc(cap);
-            if (!out) error(0, "OOM stringify");
+            if (!out) error(0, "Splice/SystemError OOM stringify");
 
             char open = (oa->type == OBJ_TUPLE) ? '(' : '[';
             char close = (oa->type == OBJ_TUPLE) ? ')' : ']';
@@ -1515,14 +1541,14 @@ static inline void interpret(ASTNode *node) {
                 }
 
                 ASTNode *mod = read_ast_from_spc(path);
-                if (!mod) error(0, "import failed: %s", path);
+                if (!mod) error(0, "Splice/ImportError import failed: %s", path);
 
                 imported_files[imported_count++] = strdup(path);
 
                 interpret(mod);   // executes + registers funcs
                 free_ast(mod);
             #else
-                error(0, "import not supported on embedded builds");
+                error(0, "Splice/ImportError import not supported on embedded builds");
             #endif
                 break;
         }
@@ -1574,7 +1600,7 @@ static inline void interpret(ASTNode *node) {
             Value val  = eval(node->write.value);
 
             if (path.type != VAL_STRING) {
-                error(0, "write(): path must be string");
+                error(0, "Splice/IOError write(): path must be string");
             }
 
             char *out;
@@ -1591,7 +1617,7 @@ static inline void interpret(ASTNode *node) {
             if (!f) {
                 free(path.string);
                 if (val.type == VAL_STRING) free(val.string);
-                error(0, "write(): cannot open file");
+                error(0, "Splice/IOError write(): cannot open file");
             }
 
             fwrite(out, 1, strlen(out), f);
@@ -1612,7 +1638,7 @@ static inline void interpret(ASTNode *node) {
 
         case AST_FOR: {
         if (!node->forstmt.for_var) {
-            error(0, "for-loop variable name is NULL");
+            error(0, "Splice/NULLError for-loop variable name is NULL");
         }
 
         int start = (int)eval(node->forstmt.for_start).number;
@@ -1664,12 +1690,12 @@ typedef struct {
 } SpcMemReader;
 
 static inline unsigned char m_u8(SpcMemReader *r) {
-    if (r->pos >= r->size) error(0, "Unexpected EOF (mem u8)");
+    if (r->pos >= r->size) error(0, "Splice/IOError Unexpected EOF (mem u8)");
     return r->data[r->pos++];
 }
 
 static inline unsigned short m_u16(SpcMemReader *r) {
-    if (r->pos + 2 > r->size) error(0, "Unexpected EOF (mem u16)");
+    if (r->pos + 2 > r->size) error(0, "Splice/IOError Unexpected EOF (mem u16)");
     unsigned short v;
     memcpy(&v, r->data + r->pos, 2);
     r->pos += 2;
@@ -1677,7 +1703,7 @@ static inline unsigned short m_u16(SpcMemReader *r) {
 }
 
 static inline unsigned int m_u32(SpcMemReader *r) {
-    if (r->pos + 4 > r->size) error(0, "Unexpected EOF (mem u32)");
+    if (r->pos + 4 > r->size) error(0, "Splice/IOError Unexpected EOF (mem u32)");
     unsigned int v;
     memcpy(&v, r->data + r->pos, 4);
     r->pos += 4;
@@ -1686,7 +1712,7 @@ static inline unsigned int m_u32(SpcMemReader *r) {
 
 static inline double m_double(SpcMemReader *r) {
     if (r->pos + sizeof(double) > r->size)
-        error(0, "Unexpected EOF (mem double)");
+        error(0, "Splice/IOError Unexpected EOF (mem double)");
     double d;
     memcpy(&d, r->data + r->pos, sizeof(double));
     r->pos += sizeof(double);
@@ -1695,7 +1721,7 @@ static inline double m_double(SpcMemReader *r) {
 
 static inline char *m_str(SpcMemReader *r) {
     unsigned short len = m_u16(r);
-    if (r->pos + len > r->size) error(0, "Unexpected EOF (mem string)");
+    if (r->pos + len > r->size) error(0, "Splice/IOError Unexpected EOF (mem string)");
     char *s = (char*)malloc(len + 1);
     memcpy(s, r->data + r->pos, len);
     r->pos += len;
@@ -1755,7 +1781,7 @@ static ASTNode *read_ast_node_mem(SpcMemReader *r) {
         }
 
         default:
-            error(0, "Unsupported AST type in mem reader: %d", n->type);
+            error(0, "Splice/IOError Unsupported AST type in mem reader: %d", n->type);
     }
 
     return n;
@@ -1764,12 +1790,12 @@ static inline ASTNode *read_ast_from_spc_mem(
     const unsigned char *data,
     size_t size
 ) {
-    if (size < 5) error(0, "Invalid SPC (too small)");
+    if (size < 5) error(0, "Splice/SPCrror Invalid SPC (too small)");
     if (memcmp(data, SPC_MAGIC, 4) != 0)
-        error(0, "Invalid SPC magic");
+        error(0, "Splice/SPCrror Invalid SPC magic");
 
     if (data[4] != SPC_VERSION)
-        error(0, "Unsupported SPC version");
+        error(0, "Splice/SPCrror Unsupported SPC version");
 
     SpcMemReader r;
     r.data = data;

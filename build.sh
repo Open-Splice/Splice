@@ -20,16 +20,16 @@ echo "Proceeding with build on $OS/$ARCH..."
 echo "Building Splice runtime and native module..."
 
 # Compile Splice runtime (with SDK globals)
-gcc -DSDK_IMPLEMENTATION -Isrc -Wall -Wextra -c -DNDEBUG -O3 -flto src/splice.c -o "$BIN_DIR/Splice.o"
+gcc -DSDK_IMPLEMENTATION -Isrc -Wall -Wextra -c -Ofast -march=native -mtune=native -flto -fomit-frame-pointer -funroll-loops -fno-semantic-interposition -fno-math-errno -fno-trapping-math -fstrict-aliasing -DNDEBUG src/splice.c -o "$BIN_DIR/Splice.o"
 
 # Compile native module without SDK_IMPLEMENTATION
-gcc -Isrc -Wall -Wextra -c -DNDEBUG -O3 -flto src/module_stubs.c -o "$BIN_DIR/module_stubs.o"
+gcc -Isrc -Wall -Wextra -c -Ofast -march=native -mtune=native -flto -fomit-frame-pointer -funroll-loops -fno-semantic-interposition -fno-math-errno -fno-trapping-math -fstrict-aliasing -DNDEBUG src/module_stubs.c -o "$BIN_DIR/module_stubs.o"
 
 # Link executable (local binary: Splice)
 gcc "$BIN_DIR/Splice.o" "$BIN_DIR/module_stubs.o" -o "$BIN_DIR/Splice"
 
 echo "Building spbuild (bytecode compiler)..."
-gcc -Isrc -Wall -Wextra -DNDEBUG -O3 -flto src/build.c -o "$BIN_DIR/spbuild"
+gcc -Isrc -Wall -Wextra -Ofast -march=native -mtune=native -flto -fomit-frame-pointer -funroll-loops -fno-semantic-interposition -fno-math-errno -fno-trapping-math -fstrict-aliasing -DNDEBUG src/build.c -o "$BIN_DIR/spbuild"
 
 # --- Install section ---
 INSTALL_DIR=""

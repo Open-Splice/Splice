@@ -110,7 +110,7 @@ static void tv_push(TokVec *v, Tok x) {
     if (v->count >= v->cap) {
         v->cap = v->cap ? v->cap*2 : 256;
         Tok *nd = (Tok*)realloc(v->data, sizeof(Tok) * (size_t)v->cap);
-        if (!nd) error(0, "oom realloc tokens");
+        if (!nd) error(0, "Splice/SystemError oom realloc tokens");
         v->data = nd;
     }
     v->data[v->count++] = x;
@@ -140,7 +140,7 @@ static void tokenize(const char *src, TokVec *out) {
             while (*p && *p!='"') p++;
             size_t n = (size_t)(p - s);
             char *str = (char*)malloc(n+1);
-            if (!str) error(line, "oom string");
+            if (!str) error(line, "Splice/SystemErroroom string");
             memcpy(str, s, n);
             str[n]=0;
             Tok t = { .t=TK_STRING, .lex=str, .line=line };
@@ -155,7 +155,7 @@ static void tokenize(const char *src, TokVec *out) {
             while (isdigit((unsigned char)*p) || *p=='.') p++;
             char tmp[128];
             size_t n = (size_t)(p - s);
-            if (n >= sizeof(tmp)) error(line, "number too long");
+            if (n >= sizeof(tmp)) error(line, "Splice/OverflowError number too long");
             memcpy(tmp, s, n);
             tmp[n]=0;
             Tok t = { .t=TK_NUMBER, .num=strtod(tmp,NULL), .line=line };
@@ -169,7 +169,7 @@ static void tokenize(const char *src, TokVec *out) {
             while (isalnum((unsigned char)*p) || *p=='_') p++;
             size_t n = (size_t)(p - s);
             char *id = (char*)malloc(n+1);
-            if (!id) error(line, "oom ident");
+            if (!id) error(line, "Splice/SystemErroroom ident");
             memcpy(id, s, n);
             id[n]=0;
 
@@ -228,7 +228,7 @@ static void tokenize(const char *src, TokVec *out) {
             case '>': tv_push(out,(Tok){.t=TK_GT,.line=line}); p++; break;
 
             default:
-                error(line, "Unknown char: '%c'", *p);
+                error(line, "Splice/SyntaxError Unknown char: '%c'", *p);
         }
     }
 
@@ -284,7 +284,7 @@ static ASTNode *parse_primary(void) {
                     if (!match(TK_COMMA)) break;
                 }
             }
-            consume(TK_RPAREN, "Expected ')' after call args");
+            consume(TK_RPAREN, "Splice/SyntaxError Expected ')' after call args");
 
             ASTNode *c = ast_new(AST_FUNCTION_CALL);
             c->funccall.funcname = name;
@@ -296,7 +296,7 @@ static ASTNode *parse_primary(void) {
         /* ident[index] */
         if (match(TK_LBRACKET)) {
             ASTNode *idx = parse_expression();
-            consume(TK_RBRACKET, "Expected ']' after index");
+            consume(TK_RBRACKET, "Splice/SyntaxError Expected ']' after index");
 
             ASTNode *id = ast_new(AST_IDENTIFIER);
             id->string = name;
@@ -333,7 +333,7 @@ static ASTNode *parse_primary(void) {
                 items[count++] = parse_expression();
             } while (match(TK_COMMA));
 
-            consume(TK_RPAREN, "Expected ')' after tuple");
+            consume(TK_RPAREN, "Splice/SyntaxError Expected ')' after tuple");
 
             ASTNode *t = ast_new(AST_TUPLE);
             t->tuple.items = items;
@@ -342,23 +342,23 @@ static ASTNode *parse_primary(void) {
         }
 
         /* otherwise normal grouping */
-        consume(TK_RPAREN, "Expected ')'");
+        consume(TK_RPAREN, "Splice/SyntaxError Expected ')'");
         return first;
     }
 
     if (match(TK_READ)) {
-        consume(TK_LPAREN, "Expected '(' after read");
+        consume(TK_LPAREN, "Splice/SyntaxError Expected '(' after read");
         ASTNode *e = parse_expression();
-        consume(TK_RPAREN, "Expected ')' after read");
+        consume(TK_RPAREN, "Splice/SyntaxError Expected ')' after read");
 
         ASTNode *n = ast_new(AST_READ);
         n->read.expr = e;
         return n;
     }
     if (match(TK_INPUT)) {
-        consume(TK_LPAREN, "Expected '(' after input");
+        consume(TK_LPAREN, "Splice/SyntaxError Expected '(' after input");
         ASTNode *e = parse_expression();
-        consume(TK_RPAREN, "Expected ')' after input prompt");
+        consume(TK_RPAREN, "Splice/SyntaxError Expected ')' after input prompt");
         ASTNode *n = ast_new(AST_INPUT);
         n->input.prompt = e;
         return n;
@@ -375,7 +375,7 @@ static ASTNode *parse_primary(void) {
                 if (!match(TK_COMMA)) break;
             }
         }
-        consume(TK_RBRACKET, "Expected ']' after array literal");
+        consume(TK_RBRACKET, "Splice/SyntaxError Expected ']' after array literal");
 
         ASTNode *a = ast_new(AST_ARRAY_LITERAL);
         a->arraylit.elements = els;
@@ -383,7 +383,7 @@ static ASTNode *parse_primary(void) {
         return a;
     }
 
-    error(peek()->line, "Expected expression");
+    error(peek()->line, "Splice/SyntaxError Expected expression");
     return NULL;
 }
 
@@ -486,8 +486,8 @@ static ASTNode *parse_statements_until(TokType end) {
 
 static ASTNode *parse_statement(void) {
     if (match(TK_LET)) {
-        Tok *id = consume(TK_IDENT, "Expected identifier after let");
-        consume(TK_ASSIGN, "Expected '=' after let name");
+        Tok *id = consume(TK_IDENT, "Splice/SyntaxError Expected identifier after let");
+        consume(TK_ASSIGN, "Splice/SyntaxError Expected '=' after let name");
         ASTNode *rhs = parse_expression();
 
         ASTNode *n = ast_new(AST_LET);
@@ -497,15 +497,15 @@ static ASTNode *parse_statement(void) {
     }
 
     if (match(TK_PRINT)) {
-        consume(TK_LPAREN, "Expected '(' after print");
+        consume(TK_LPAREN, "Splice/SyntaxError Expected '(' after print");
         ASTNode *e = parse_expression();
-        consume(TK_RPAREN, "Expected ')' after print expr");
+        consume(TK_RPAREN, "Splice/SyntaxError Expected ')' after print expr");
         ASTNode *n = ast_new(AST_PRINT);
         n->print.expr = e;
         return n;
     }
     if (match(TK_IMPORT)) {
-        Tok *f = consume(TK_STRING, "Expected string filename after import");
+        Tok *f = consume(TK_STRING, "Splice/SyntaxError Expected string filename after import");
 
         ASTNode *n = ast_new(AST_IMPORT);
 
@@ -517,12 +517,11 @@ static ASTNode *parse_statement(void) {
     }
 
     if (match(TK_WRITE)) {
-        consume(TK_LPAREN, "Expected '(' after write");
+        consume(TK_LPAREN, "Splice/SyntaxError Expected '(' after write");
         ASTNode *path = parse_expression();
-        consume(TK_COMMA, "Expected ',' after write path");
+        consume(TK_COMMA, "Splice/SyntaxError Expected ',' after write path");
         ASTNode *val = parse_expression();
-        consume(TK_RPAREN, "Expected ')' after write");
-
+        consume(TK_RPAREN, "Splice/SyntaxError Expected ')' after write");
         ASTNode *n = ast_new(AST_WRITE);
         n->write.path = path;
         n->write.value = val;
@@ -530,9 +529,9 @@ static ASTNode *parse_statement(void) {
     }
 
     if (match(TK_RAISE)) {
-        consume(TK_LPAREN, "Expected '(' after raise");
+        consume(TK_LPAREN, "Splice/SyntaxError Expected '(' after raise");
         ASTNode *e = parse_expression();
-        consume(TK_RPAREN, "Expected ')' after raise expr");
+        consume(TK_RPAREN, "Splice/SyntaxError Expected ')' after raise expr");
         ASTNode *n = ast_new(AST_RAISE);
         n->raise.expr = e;
         return n;
@@ -547,26 +546,25 @@ static ASTNode *parse_statement(void) {
     }
 
     if (match(TK_FUNC)) {
-        Tok *id = consume(TK_IDENT, "Expected function name");
-        consume(TK_LPAREN, "Expected '(' after func name");
+        Tok *id = consume(TK_IDENT, "Splice/SyntaxError Expected function name");
+        consume(TK_LPAREN, "Splice/SyntaxError Expected '(' after func name");
 
         char **params=NULL;
         int pc=0, cap=0;
 
         if (!at(TK_RPAREN)) {
             for (;;) {
-                Tok *p = consume(TK_IDENT, "Expected param name");
+                Tok *p = consume(TK_IDENT, "Splice/SyntaxError Expected param name");
                 if (pc>=cap) { cap=cap?cap*2:8; params=(char**)realloc(params,sizeof(char*)*(size_t)cap); }
                 params[pc++] = strdup(p->lex);
                 if (!match(TK_COMMA)) break;
             }
         }
-        consume(TK_RPAREN, "Expected ')' after params");
+        consume(TK_RPAREN, "Splice/SyntaxError Expected ')' after params");
 
-        consume(TK_LBRACE, "Expected '{' before func body");
+        consume(TK_LBRACE, "Splice/SyntaxError Expected '{' before func body");
         ASTNode *body = parse_statements_until(TK_RBRACE);
-        consume(TK_RBRACE, "Expected '}' after func body");
-
+        consume(TK_RBRACE, "Splice/SyntaxError Expected '}' after func body");  
         ASTNode *n = ast_new(AST_FUNC_DEF);
         n->funcdef.funcname = strdup(id->lex);
         n->funcdef.params = params;
@@ -576,18 +574,18 @@ static ASTNode *parse_statement(void) {
     }
 
     if (match(TK_IF)) {
-        consume(TK_LPAREN, "Expected '(' after if");
+        consume(TK_LPAREN, "Splice/SyntaxError Expected '(' after if");
         ASTNode *cond = parse_expression();
-        consume(TK_RPAREN, "Expected ')' after if cond");
-        consume(TK_LBRACE, "Expected '{' after if");
+        consume(TK_RPAREN, "Splice/SyntaxError Expected ')' after if cond");
+        consume(TK_LBRACE, "Splice/SyntaxError Expected '{' after if");
         ASTNode *thenb = parse_statements_until(TK_RBRACE);
-        consume(TK_RBRACE, "Expected '}' after if body");
+        consume(TK_RBRACE, "Splice/SyntaxError Expected '}' after if body");
 
         ASTNode *elseb = NULL;
         if (match(TK_ELSE)) {
-            consume(TK_LBRACE, "Expected '{' after else");
+            consume(TK_LBRACE, "Splice/SyntaxError Expected '{' after else");
             elseb = parse_statements_until(TK_RBRACE);
-            consume(TK_RBRACE, "Expected '}' after else body");
+            consume(TK_RBRACE, "Splice/SyntaxError Expected '}' after else body");
         }
 
         ASTNode *n = ast_new(AST_IF);
@@ -598,12 +596,12 @@ static ASTNode *parse_statement(void) {
     }
 
     if (match(TK_WHILE)) {
-        consume(TK_LPAREN, "Expected '(' after while");
+        consume(TK_LPAREN, "Splice/SyntaxError Expected '(' after while");
         ASTNode *cond = parse_expression();
-        consume(TK_RPAREN, "Expected ')' after while cond");
-        consume(TK_LBRACE, "Expected '{' after while");
+        consume(TK_RPAREN, "Splice/SyntaxError Expected ')' after while cond");
+        consume(TK_LBRACE, "Splice/SyntaxError Expected '{' after while");
         ASTNode *body = parse_statements_until(TK_RBRACE);
-        consume(TK_RBRACE, "Expected '}' after while body");
+        consume(TK_RBRACE, "Splice/SyntaxError Expected '}' after while body");
 
         ASTNode *n = ast_new(AST_WHILE);
         n->whilestmt.cond = cond;
@@ -612,14 +610,14 @@ static ASTNode *parse_statement(void) {
     }
 
     if (match(TK_FOR)) {
-        Tok *id = consume(TK_IDENT, "Expected for variable");
-        consume(TK_IN, "Expected 'in' after for var");
+        Tok *id = consume(TK_IDENT, "Splice/SyntaxError Expected for variable");
+        consume(TK_IN, "Splice/SyntaxError Expected 'in' after for var");
         ASTNode *start = parse_expression();
-        consume(TK_DOT, "Expected '.' in for range");
+        consume(TK_DOT, "Splice/SyntaxError Expected '.' in for range");
         ASTNode *end = parse_expression();
-        consume(TK_LBRACE, "Expected '{' after for range");
+        consume(TK_LBRACE, "Splice/SyntaxError Expected '{' after for range");
         ASTNode *body = parse_statements_until(TK_RBRACE);
-        consume(TK_RBRACE, "Expected '}' after for body");
+        consume(TK_RBRACE, "Splice/SyntaxError Expected '}' after for body");
 
         ASTNode *n = ast_new(AST_FOR);
         n->forstmt.for_var = strdup(id->lex);
@@ -645,8 +643,8 @@ static ASTNode *parse_statement(void) {
         /* ident[expr] = expr */
         if (match(TK_LBRACKET)) {
             ASTNode *idx = parse_expression();
-            consume(TK_RBRACKET, "Expected ']' after index");
-            consume(TK_ASSIGN, "Expected '=' after index");
+            consume(TK_RBRACKET, "Splice/SyntaxError Expected ']' after index");
+            consume(TK_ASSIGN, "Splice/SyntaxError Expected '=' after index");
             ASTNode *rhs = parse_expression();
 
             ASTNode *target = ast_new(AST_IDENTIFIER);
