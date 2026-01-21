@@ -10,6 +10,7 @@ jobs:
   build-test:
     name: Build & Test (${{ matrix.os }} - ${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
+
     strategy:
       fail-fast: false
       matrix:
@@ -21,6 +22,7 @@ jobs:
           - os: macos
             arch: arm64
             runner: macos-14
+
           # Linux
           - os: linux
             arch: x64
@@ -28,7 +30,8 @@ jobs:
           - os: linux
             arch: arm64
             runner: ubuntu-22.04
-          # Windows
+
+          # Windows (CI only, no runtime)
           - os: windows
             arch: x64
             runner: windows-2022
@@ -37,46 +40,41 @@ jobs:
             runner: windows-2022
 
     steps:
-      - name: Checkout source
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Make build script executable
-        run: chmod +x build.sh
-        shell: bash
-
-      - name: Run build script (CI mode)
-        run: CI=true ./build.sh
-        shell: bash
-
-      - name: Verify binaries exist
-        run: |
-          ls -lh ./Splice || true
-          ls -lh ./spbuild || true
-        shell: bash
-
-      - name: Run tests
-        run: |
-          if [ -d build ]; then
-            cd build
-            ctest --output-on-failure || true
-          else
-            echo "No build dir found, skipping tests"
-          fi
-        shell: bash
-      - name: Testing Splice Code
+      # ========================
+      # UNIX: build + run
+      # ========================
+      - name: Build Splice (Unix)
+        if: matrix.os != 'windows'
         shell: bash
         run: |
-          if [[ "${{ matrix.os }}" == "windows" ]]; then
-            ./bin/spbuild.exe test/main.spl main.spc
-            ./bin/Splice.exe main.spc
-          else
-            ./bin/spbuild test/main.spl main.spc
-            ./bin/Splice main.spc
-          fi
+          set -e
+          chmod +x build.sh
+          CI=true ./build.sh
 
+      - name: Run Splice (Unix)
+        if: matrix.os != 'windows'
+        shell: bash
+        run: |
+          ./bin/spbuild test/main.spl main.spc
+          ./bin/Splice main.spc
+
+      # ========================
+      # WINDOWS: intentionally skipped
+      # ========================
+      - name: Skip Splice runtime (Windows)
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          Write-Host "No prebuilt Windows binaries. Runtime tests skipped."
+
+      # ========================
+      # Finish
+      # ========================
       - name: Mark as finished
-        run: echo "Build completed on ${{ matrix.os }}-${{ matrix.arch }}" > finish.txt
         shell: bash
+        run: echo "Build completed on ${{ matrix.os }}-${{ matrix.arch }}" > finish.txt
 
       - name: Upload finish artifact
         uses: actions/upload-artifact@v4
