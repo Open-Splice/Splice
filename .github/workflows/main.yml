@@ -2,84 +2,42 @@ name: Splice CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, Development, Test, Testing ]
   pull_request:
     branches: [ main ]
 
 jobs:
-  build-test:
-    name: Build & Test (${{ matrix.os }} - ${{ matrix.arch }})
-    runs-on: ${{ matrix.runner }}
+  build-and-test:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          # macOS
-          - os: macos
-            arch: x64
-            runner: macos-15-intel
-          - os: macos
-            arch: arm64
-            runner: macos-14
-          # Linux
-          - os: linux
-            arch: x64
-            runner: ubuntu-22.04
-          - os: linux
-            arch: arm64
-            runner: ubuntu-22.04
-          # Windows
-          - os: windows
-            arch: x64
-            runner: windows-2022
-          - os: windows
-            arch: arm64
-            runner: windows-2022
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    runs-on: ${{ matrix.os }}
 
     steps:
-      - name: Checkout source
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Make build script executable
-        run: chmod +x build.sh
-        shell: bash
-
-      - name: Run build script (CI mode)
-        run: CI=true ./build.sh
-        shell: bash
-
-      - name: Verify binaries exist
-        run: |
-          ls -lh ./Splice || true
-          ls -lh ./spbuild || true
-        shell: bash
-
-      - name: Run tests
-        run: |
-          if [ -d build ]; then
-            cd build
-            ctest --output-on-failure || true
-          else
-            echo "No build dir found, skipping tests"
-          fi
-        shell: bash
-      - name: Testing Splice Code
+      # -------------------------
+      # Linux / macOS
+      # -------------------------
+      - name: Build & Run Splice (Unix)
+        if: runner.os != 'Windows'
         shell: bash
         run: |
-          if [[ "${{ matrix.os }}" == "windows" ]]; then
-            ./bin/spbuild.exe test/main.spl main.spc
-            ./bin/Splice.exe main.spc
-          else
-            ./bin/spbuild test/main.spl main.spc
-            ./bin/Splice main.spc
-          fi
+          set -e
+          chmod +x bin/spbuild bin/Splice
+          ./bin/spbuild test/main.spl main.spc
+          ./bin/Splice main.spc
 
-      - name: Mark as finished
-        run: echo "Build completed on ${{ matrix.os }}-${{ matrix.arch }}" > finish.txt
-        shell: bash
-
-      - name: Upload finish artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: splice-finish-${{ matrix.os }}-${{ matrix.arch }}
-          path: finish.txt
+      # -------------------------
+      # Windows (PowerShell ONLY)
+      # -------------------------
+      - name: Build & Run Splice (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          .\bin\spbuild.exe test\main.spl main.spc
+          .\bin\Splice.exe main.spc
