@@ -1,11 +1,10 @@
 func calculator(num1, num2, op) {
     if (op == "+") {
         print(num1 + num2);
-    }
-    if (op == "-") {
+    } else if (op == "-") {
         print(num1 - num2);
     }
 }
 
 calculator(5, 3, "+");   
-calculator(5, 3, "-");   
+calculator(5, 6, "-");   
