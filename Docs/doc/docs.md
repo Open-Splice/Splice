@@ -139,7 +139,7 @@ while (i < 5) {
 Splice supports `for` loops with a counter variable.
 
 ```splice
-for (let i = 0; i < 5; i = i + 1) {
+for i in 1 . 10 {
     print(i);
 }
 ```
@@ -264,3 +264,6 @@ void loop() {}
 ---
 
 
+
+© Copyright 2026 OpenSplice and the Sinha Group
+Licensed under the MIT License

@@ -78,13 +78,15 @@ typedef enum {
     TK_IF, TK_ELSE, TK_WHILE, TK_FOR, TK_IN,
     TK_RAISE,
     TK_TRUE, TK_FALSE,
-    TK_AND, TK_OR, TK_NOT,
+    TK_AND, TK_OR, TK_NOT,TK_DOTDOT,TK_BREAK,TK_CONTINUE,
+
+
 
     TK_LPAREN, TK_RPAREN,
     TK_LBRACE, TK_RBRACE,
     TK_LBRACKET, TK_RBRACKET,
     TK_COMMA, TK_SEMI,
-    TK_DOT,
+    TK_DOT,TK_QUIT,
 
     TK_ASSIGN,      /* = */
     TK_PLUS, TK_MINUS, TK_STAR, TK_SLASH, TK_IMPORT,
@@ -152,7 +154,12 @@ static void tokenize(const char *src, TokVec *out) {
         /* number */
         if (isdigit((unsigned char)*p)) {
             const char *s = p;
-            while (isdigit((unsigned char)*p) || *p=='.') p++;
+            while (isdigit((unsigned char)*p)) p++;
+                if (*p=='.' && isdigit((unsigned char)p[1])) {
+                    p++;
+                    while (isdigit((unsigned char)*p)) p++;
+                }
+
             char tmp[128];
             size_t n = (size_t)(p - s);
             if (n >= sizeof(tmp)) error(line, "Splice/OverflowError number too long");
@@ -187,12 +194,15 @@ static void tokenize(const char *src, TokVec *out) {
             else if (!strcmp(id,"read"))   kw = TK_READ;
             else if (!strcmp(id,"write"))  kw = TK_WRITE;
             else if (!strcmp(id,"true"))   kw=TK_TRUE;
+            else if (!strcmp(id,"break")) kw = TK_BREAK;
+            else if (!strcmp(id, "continue")) kw = TK_CONTINUE;
             else if (!strcmp(id,"false"))  kw=TK_FALSE;
             else if (!strcmp(id,"and"))    kw=TK_AND;
             else if (!strcmp(id,"or"))     kw=TK_OR;
             else if (!strcmp(id,"not"))    kw=TK_NOT;
             else if (!strcmp(id,"input"))  kw=TK_INPUT;
             else if (!strcmp(id,"import")) kw=TK_IMPORT;
+            else if (!strcmp(id,"quit"))   kw=TK_QUIT;
 
             Tok t = { .t=kw, .lex=(kw==TK_IDENT? id : NULL), .line=line };
             if (kw!=TK_IDENT) free(id);
@@ -205,9 +215,14 @@ static void tokenize(const char *src, TokVec *out) {
         if (p[0]=='!' && p[1]=='=') { tv_push(out,(Tok){.t=TK_NEQ,.line=line}); p+=2; continue; }
         if (p[0]=='<' && p[1]=='=') { tv_push(out,(Tok){.t=TK_LE,.line=line}); p+=2; continue; }
         if (p[0]=='>' && p[1]=='=') { tv_push(out,(Tok){.t=TK_GE,.line=line}); p+=2; continue; }
-
+        if (p[0]=='.' && p[1]=='.') {
+            tv_push(out, (Tok){ .t = TK_DOTDOT, .line = line });
+            p += 2;
+            continue;
+        }
         /* single-char */
         switch (*p) {
+            case '.': tv_push(out,(Tok){.t=TK_DOT,.line=line}); p++; break;
             case '(': tv_push(out,(Tok){.t=TK_LPAREN,.line=line}); p++; break;
             case ')': tv_push(out,(Tok){.t=TK_RPAREN,.line=line}); p++; break;
             case '{': tv_push(out,(Tok){.t=TK_LBRACE,.line=line}); p++; break;
@@ -216,8 +231,12 @@ static void tokenize(const char *src, TokVec *out) {
             case ']': tv_push(out,(Tok){.t=TK_RBRACKET,.line=line}); p++; break;
             case ',': tv_push(out,(Tok){.t=TK_COMMA,.line=line}); p++; break;
             case ';': tv_push(out,(Tok){.t=TK_SEMI,.line=line}); p++; break;
-            case '.': tv_push(out,(Tok){.t=TK_DOT,.line=line}); p++; break;
+            
 
+
+
+
+            
             case '=': tv_push(out,(Tok){.t=TK_ASSIGN,.line=line}); p++; break;
             case '+': tv_push(out,(Tok){.t=TK_PLUS,.line=line}); p++; break;
             case '-': tv_push(out,(Tok){.t=TK_MINUS,.line=line}); p++; break;
@@ -495,6 +514,13 @@ static ASTNode *parse_statement(void) {
         n->var.value = rhs;
         return n;
     }
+    if (match(TK_CONTINUE)) {
+        return ast_new(AST_CONTINUE);
+    }
+    if (match(TK_BREAK)) {
+        return ast_new(AST_BREAK);
+    }
+
 
     if (match(TK_PRINT)) {
         consume(TK_LPAREN, "Splice/SyntaxError Expected '(' after print");
@@ -504,6 +530,17 @@ static ASTNode *parse_statement(void) {
         n->print.expr = e;
         return n;
     }
+    if (match(TK_QUIT)) {
+        ASTNode *zero = ast_new(AST_NUMBER);
+        zero->number = 0;
+
+        ASTNode *ret = ast_new(AST_RETURN);
+        ret->retstmt.expr = zero;
+
+        return ret;
+    }
+
+
     if (match(TK_IMPORT)) {
         Tok *f = consume(TK_STRING, "Splice/SyntaxError Expected string filename after import");
 
@@ -577,23 +614,33 @@ static ASTNode *parse_statement(void) {
         consume(TK_LPAREN, "Splice/SyntaxError Expected '(' after if");
         ASTNode *cond = parse_expression();
         consume(TK_RPAREN, "Splice/SyntaxError Expected ')' after if cond");
+
         consume(TK_LBRACE, "Splice/SyntaxError Expected '{' after if");
         ASTNode *thenb = parse_statements_until(TK_RBRACE);
         consume(TK_RBRACE, "Splice/SyntaxError Expected '}' after if body");
 
         ASTNode *elseb = NULL;
+
         if (match(TK_ELSE)) {
-            consume(TK_LBRACE, "Splice/SyntaxError Expected '{' after else");
-            elseb = parse_statements_until(TK_RBRACE);
-            consume(TK_RBRACE, "Splice/SyntaxError Expected '}' after else body");
+            /* else if (...) { ... } */
+            if (at(TK_IF)) {
+                elseb = parse_statement();  // recurse → AST_IF
+            }
+            /* else { ... } */
+            else {
+                consume(TK_LBRACE, "Splice/SyntaxError Expected '{' after else");
+                elseb = parse_statements_until(TK_RBRACE);
+                consume(TK_RBRACE, "Splice/SyntaxError Expected '}' after else body");
+            }
         }
 
         ASTNode *n = ast_new(AST_IF);
-        n->ifstmt.condition = cond;
+        n->ifstmt.condition   = cond;
         n->ifstmt.then_branch = thenb;
         n->ifstmt.else_branch = elseb;
         return n;
     }
+
 
     if (match(TK_WHILE)) {
         consume(TK_LPAREN, "Splice/SyntaxError Expected '(' after while");
@@ -613,7 +660,7 @@ static ASTNode *parse_statement(void) {
         Tok *id = consume(TK_IDENT, "Splice/SyntaxError Expected for variable");
         consume(TK_IN, "Splice/SyntaxError Expected 'in' after for var");
         ASTNode *start = parse_expression();
-        consume(TK_DOT, "Splice/SyntaxError Expected '.' in for range");
+        consume(TK_DOTDOT, "Splice/SyntaxError Expected '.' in for range");
         ASTNode *end = parse_expression();
         consume(TK_LBRACE, "Splice/SyntaxError Expected '{' after for range");
         ASTNode *body = parse_statements_until(TK_RBRACE);

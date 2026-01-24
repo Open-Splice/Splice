@@ -119,9 +119,12 @@ typedef enum {
     AST_BINARY_OP,
     AST_LET,
     AST_ASSIGN,
+    AST_BREAK,
     AST_PRINT,
     AST_READ,
     AST_WRITE,
+    AST_CONTINUE,
+
     AST_RAISE,
     AST_WARN,
     AST_INPUT,
@@ -234,7 +237,8 @@ typedef struct {
    ========================= */
 static jmp_buf return_buf;
 static Value   return_value;
-
+static jmp_buf *break_buf = NULL;
+static jmp_buf *continue_buf = NULL;
 typedef enum { VAR_NUMBER, VAR_STRING, VAR_OBJECT } VarType;
 typedef struct {
     char  *name;
@@ -780,6 +784,11 @@ static void write_ast_node(FILE *f, const ASTNode *n) {
         case AST_IDENTIFIER:
             w_str(f, n->string);
             break;
+        case AST_BREAK:
+            /* nothing to write */
+            break;
+        case AST_CONTINUE:
+            break;
 
         case AST_BINARY_OP:
             w_str(f, n->binop.op);
@@ -890,6 +899,9 @@ static ASTNode *read_ast_node(FILE *f) {
         case AST_READ:
             n->read.expr = read_ast_node(f);
             break;
+        case AST_BREAK:
+            /* nothing to read */
+            break;
 
         case AST_WRITE:
             n->write.path  = read_ast_node(f);
@@ -908,6 +920,8 @@ static ASTNode *read_ast_node(FILE *f) {
                 n->tuple.items[i] = read_ast_node(f);
             break;
         }
+        case AST_CONTINUE:
+            break;
 
         case AST_STRING:
         case AST_IDENTIFIER:
@@ -1300,8 +1314,24 @@ static inline Value eval(ASTNode *node) {
             double result = 0;
             const char *op = node->binop.op ? node->binop.op : "";
 
-            if (strcmp(op, "==") == 0) result = (lnum == rnum);
-            else if (strcmp(op, "!=") == 0) result = (lnum != rnum);
+            if (strcmp(op, "==") == 0) {
+                if (left.type == VAL_STRING || right.type == VAL_STRING) {
+                    const char *ls = (left.type == VAL_STRING) ? left.string : "";
+                    const char *rs = (right.type == VAL_STRING) ? right.string : "";
+                    result = (strcmp(ls, rs) == 0);
+                } else {
+                    result = (lnum == rnum);
+                }
+            }
+            else if (strcmp(op, "!=") == 0) {
+                if (left.type == VAL_STRING || right.type == VAL_STRING) {
+                    const char *ls = (left.type == VAL_STRING) ? left.string : "";
+                    const char *rs = (right.type == VAL_STRING) ? right.string : "";
+                    result = (strcmp(ls, rs) != 0);
+                } else {
+                    result = (lnum != rnum);
+                }
+            }
             else if (strcmp(op, "+") == 0) result = lnum + rnum;
             else if (strcmp(op, "-") == 0) result = lnum - rnum;
             else if (strcmp(op, "*") == 0) result = lnum * rnum;
@@ -1531,6 +1561,15 @@ static inline void interpret(ASTNode *node) {
             }
             break;
         }
+        case AST_CONTINUE:
+            longjmp(*continue_buf, 1);
+            break;
+
+        case AST_BREAK:
+            if (!break_buf)
+                error(0, "Splice/SyntaxError 'break' outside loop");
+            longjmp(*break_buf, 1);
+            break;
 
         case AST_IMPORT: {
             #if !SPLICE_EMBED
@@ -1631,10 +1670,32 @@ static inline void interpret(ASTNode *node) {
             break;
         }
 
-        case AST_WHILE:
-            while (eval(node->whilestmt.cond).number)
-                interpret(node->whilestmt.body);
+        case AST_WHILE: {
+            jmp_buf jb, jc;
+
+            jmp_buf *prev_break = break_buf;
+            jmp_buf *prev_cont  = continue_buf;
+
+            break_buf    = &jb;
+            continue_buf = &jc;
+
+            if (setjmp(jb) == 0) {
+                while (eval(node->whilestmt.cond).number) {
+                    if (setjmp(jc) == 0) {
+                        interpret(node->whilestmt.body);
+                    }
+                    // continue lands here
+                }
+            }
+
+            // restore outer loop context
+            break_buf    = prev_break;
+            continue_buf = prev_cont;
+
             break;
+        }
+
+
 
         case AST_FOR: {
         if (!node->forstmt.for_var) {
@@ -1644,10 +1705,33 @@ static inline void interpret(ASTNode *node) {
         int start = (int)eval(node->forstmt.for_start).number;
         int end   = (int)eval(node->forstmt.for_end).number;
 
-        for (int k = start; k <= end; ++k) {
-            set_var(node->forstmt.for_var, VAR_NUMBER, k, NULL);
-            interpret(node->forstmt.for_body);
+        jmp_buf jb, jc;
+
+        jmp_buf *prev_break = break_buf;
+        jmp_buf *prev_cont  = continue_buf;
+
+        break_buf    = &jb;
+        continue_buf = &jc;
+
+        if (setjmp(jb) == 0) {
+            for (int k = start; k <= end; ++k) {
+
+                set_var(node->forstmt.for_var, VAR_NUMBER, k, NULL);
+
+                if (setjmp(jc) == 0) {
+                    interpret(node->forstmt.for_body);
+                }
+                // continue jumps land here
+            }
         }
+
+        // restore outer context
+        break_buf    = prev_break;
+        continue_buf = prev_cont;
+
+
+        
+
         break;
     }
 
