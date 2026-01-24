@@ -1,5 +1,9 @@
-func hi(a) {
-    print(a);
-    hi(a + 1);
+let i = 0
+
+while (i < 5) {
+    i = i + 1
+    if (i == 3) {
+        continue
+    }
+    print(i)
 }
-hi(1);

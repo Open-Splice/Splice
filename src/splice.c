@@ -22,10 +22,7 @@ int main(int argc, char **argv) {
     }
 
     ASTNode *root = read_ast_from_spc(arg);
-    info(0, "Loaded AST from %s", arg);
     interpret(root);
     free_ast(root);
-
-    success(0, "Code ran successfully");
     return 0;
 }
