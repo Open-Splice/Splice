@@ -1562,7 +1562,7 @@ static inline void interpret(ASTNode *node) {
             break;
         }
         case AST_CONTINUE:
-            longjmp(continue_buf, 1);
+            longjmp(*continue_buf, 1);
             break;
 
         case AST_BREAK:
