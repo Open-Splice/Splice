@@ -81,45 +81,6 @@ static int is_safe_relative_path(const char *arg) {
     return 1;
 }
 
-static int path_within_base(const char *path, const char *base) {
-    size_t base_len = strlen(base);
-    if (strncmp(path, base, base_len) != 0) {
-        return 0;
-    }
-    return path[base_len] == '\0' || path[base_len] == '/';
-}
-
-static int fullpath_buf(const char *path, char *out, size_t out_sz) {
-#ifdef _WIN32
-    return _fullpath(out, path, out_sz) != NULL;
-#else
-    (void)out_sz;
-    return realpath(path, out) != NULL;
-#endif
-}
-
-static int resolve_input_path(const char *arg, char *dst, size_t dst_len) {
-    if (!is_safe_relative_path(arg)) {
-        return 0;
-    }
-
-    char cwd[PATH_MAX];
-    char resolved[PATH_MAX];
-    if (!splice_getcwd(cwd, sizeof(cwd))) {
-        return 0;
-    }
-    if (!fullpath_buf(arg, resolved, sizeof(resolved))) {
-        return 0;
-    }
-    if (!path_within_base(resolved, cwd)) {
-        return 0;
-    }
-    if (snprintf(dst, dst_len, "%s", resolved) >= (int)dst_len) {
-        return 0;
-    }
-    return 1;
-}
-
 int main(int argc, char **argv) {
     if (argc < 2) {
         fprintf(stderr, "Usage: %s <file.spc>\n", argv[0]);
@@ -131,12 +92,11 @@ int main(int argc, char **argv) {
         return 0;
     }
 
-    char path_buf[PATH_MAX];
-    if (!resolve_input_path(argv[1], path_buf, sizeof(path_buf))) {
+    if (!is_safe_relative_path(argv[1])) {
         fprintf(stderr, "[ERROR] invalid SPC path\n");
         return 1;
     }
-    const char *path = path_buf;
+    const char *path = argv[1];
     const char *ext = strrchr(path, '.');
     if (!ext || strcmp(ext, ".spc") != 0) {
         fprintf(stderr, "[ERROR] only .spc supported by VM now\n");

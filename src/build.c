@@ -874,14 +874,6 @@ static int is_safe_filename(const char *name) {
     return 1;
 }
 
-static int ensure_out_dir(const char *dir) {
-    struct stat st;
-    if (stat(dir, &st) == 0) {
-        return S_ISDIR(st.st_mode);
-    }
-    return mkdir(dir, 0755) == 0;
-}
-
 int main(int argc, char **argv) {
     if (argc != 3) {
         fprintf(stderr, "Usage: %s <input.sp> <output.spc>\n", argv[0]);
@@ -892,7 +884,6 @@ int main(int argc, char **argv) {
     const char *out_arg = argv[2];
     char in_path[PATH_MAX];
     char out_path[PATH_MAX];
-    const char *out_dir = "./out";
 
     if (!resolve_input_path(in_arg, in_path, sizeof(in_path))) {
         fprintf(stderr, "spbuild: unsafe input path '%s'\n", in_arg);
@@ -904,12 +895,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    if (!ensure_out_dir(out_dir)) {
-        fprintf(stderr, "spbuild: cannot create output dir %s\n", out_dir);
-        return 1;
-    }
-
-    if (snprintf(out_path, sizeof(out_path), "%s/%s", out_dir, out_arg) >= (int)sizeof(out_path)) {
+    if (snprintf(out_path, sizeof(out_path), "./%s", out_arg) >= (int)sizeof(out_path)) {
         fprintf(stderr, "spbuild: output path too long\n");
         return 1;
     }
