@@ -312,6 +312,20 @@ static Value eval(ASTNode *n) {
         case AST_BINARY_OP: {
             Value a = eval(n->binop.left);
             Value b = eval(n->binop.right);
+            if (!strcmp(n->binop.op, "+")) {
+                if (a.type == VAL_STRING && b.type == VAL_STRING) {
+                    size_t la = strlen(a.string);
+                    size_t lb = strlen(b.string);
+                    char *s = arena_alloc(la + lb + 1);
+                    memcpy(s, a.string, la);
+                    memcpy(s + la, b.string, lb);
+                    s[la + lb] = 0;
+                    return (Value){ VAL_STRING, 0, s, NULL };
+                }
+                // fallback numeric +
+                return (Value){ VAL_NUMBER, a.number + b.number, NULL, NULL };
+            }
+            
             if (!strcmp(n->binop.op, "+")) return (Value){ VAL_NUMBER, a.number + b.number, NULL, NULL };
             if (!strcmp(n->binop.op, "-")) return (Value){ VAL_NUMBER, a.number - b.number, NULL, NULL };
             if (!strcmp(n->binop.op, "*")) return (Value){ VAL_NUMBER, a.number * b.number, NULL, NULL };
@@ -322,6 +336,36 @@ static Value eval(ASTNode *n) {
             return (Value){ VAL_NUMBER, 0, NULL, NULL };
     }
 }
+static void splice_print_value(Value v) {
+    char buf[32];
+
+    switch (v.type) {
+
+    case VAL_STRING:
+        if (v.string) {
+            SPLICE_PRINTLN(v.string);
+        } else {
+            SPLICE_PRINTLN("(null)");
+        }
+        break;
+
+    case VAL_NUMBER:
+        // portable, works everywhere
+        snprintf(buf, sizeof(buf), "%g", v.number);
+        SPLICE_PRINTLN(buf);
+        break;
+
+    case VAL_OBJECT:
+        // placeholder until objects exist
+        SPLICE_PRINTLN("<object>");
+        break;
+
+    default:
+        SPLICE_PRINTLN("<unknown>");
+        break;
+    }
+}
+
 
 /* ================= INTERPRET ================= */
 
@@ -337,14 +381,10 @@ static ExecResult interpret(ASTNode *n) {
 
         case AST_PRINT: {
             Value v = eval(n->print.expr);
-            if (v.type == VAL_STRING) SPLICE_PRINTLN(v.string);
-            else {
-                char buf[32];
-                snprintf(buf, sizeof(buf), "%g", v.number);
-                SPLICE_PRINTLN(buf);
-            }
+            splice_print_value(v);
             return EXEC_OK;
         }
+            
 
         case AST_LET:
         case AST_ASSIGN:
