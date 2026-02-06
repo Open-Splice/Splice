@@ -6,6 +6,20 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <limits.h>
+#ifdef _WIN32
+#include <direct.h>
+#endif
+
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
+
+#ifdef _WIN32
+#define splice_getcwd _getcwd
+#else
+#define splice_getcwd getcwd
+#endif
 
 /* =========================================================
    This builder emits SPC compatible with the simplified VM
@@ -764,24 +778,24 @@ static char *read_file(const char *path) {
 
 /* Basic validation to reduce path traversal risk.
    Allows only non-empty relative paths and rejects any ".." component. */
-static int is_safe_relative_path(const char *path) {
-    if (path == NULL || *path == '\0') {
+static int is_safe_relative_path(const char *arg) {
+    if (arg == NULL || *arg == '\0') {
         return 0;
     }
 
     /* Reject absolute POSIX-style paths. */
-    if (path[0] == '/') {
+    if (arg[0] == '/') {
         return 0;
     }
 
     /* Rudimentary check against Windows drive letters like "C:" or "C:\". */
-    if (((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z')) &&
-        path[1] == ':') {
+    if (((arg[0] >= 'A' && arg[0] <= 'Z') || (arg[0] >= 'a' && arg[0] <= 'z')) &&
+        arg[1] == ':') {
         return 0;
     }
 
     /* Scan components separated by '/' or '\\' and reject any that are exactly "..". */
-    const char *p = path;
+    const char *p = arg;
     while (*p) {
         while (*p == '/' || *p == '\\') {
             p++;
@@ -802,28 +816,119 @@ static int is_safe_relative_path(const char *path) {
     return 1;
 }
 
+static int path_within_base(const char *path, const char *base) {
+    size_t base_len = strlen(base);
+    if (strncmp(path, base, base_len) != 0) {
+        return 0;
+    }
+    return path[base_len] == '\0' || path[base_len] == '/';
+}
+
+static int fullpath_buf(const char *path, char *out, size_t out_sz) {
+#ifdef _WIN32
+    return _fullpath(out, path, out_sz) != NULL;
+#else
+    (void)out_sz;
+    return realpath(path, out) != NULL;
+#endif
+}
+
+static int resolve_input_path(const char *arg, char *dst, size_t dst_len) {
+    if (!is_safe_relative_path(arg)) {
+        return 0;
+    }
+
+    char cwd[PATH_MAX];
+    char resolved[PATH_MAX];
+    if (!splice_getcwd(cwd, sizeof(cwd))) {
+        return 0;
+    }
+    if (!fullpath_buf(arg, resolved, sizeof(resolved))) {
+        return 0;
+    }
+    if (!path_within_base(resolved, cwd)) {
+        return 0;
+    }
+    if (snprintf(dst, dst_len, "%s", resolved) >= (int)dst_len) {
+        return 0;
+    }
+    return 1;
+}
+
+static int resolve_output_path(const char *arg, char *dst, size_t dst_len) {
+    if (!is_safe_relative_path(arg)) {
+        return 0;
+    }
+
+    const char *slash = strrchr(arg, '/');
+    const char *bslash = strrchr(arg, '\\');
+    if (bslash && (!slash || bslash > slash)) {
+        slash = bslash;
+    }
+
+    char dir[PATH_MAX];
+    const char *base = arg;
+    if (slash) {
+        size_t dlen = (size_t)(slash - arg);
+        if (dlen == 0 || dlen >= sizeof(dir)) {
+            return 0;
+        }
+        memcpy(dir, arg, dlen);
+        dir[dlen] = '\0';
+        base = slash + 1;
+    } else {
+        strcpy(dir, ".");
+    }
+
+    if (*base == '\0' || strcmp(base, ".") == 0 || strcmp(base, "..") == 0) {
+        return 0;
+    }
+    if (strchr(base, '/') != NULL || strchr(base, '\\') != NULL) {
+        return 0;
+    }
+
+    char cwd[PATH_MAX];
+    char dir_resolved[PATH_MAX];
+    if (!splice_getcwd(cwd, sizeof(cwd))) {
+        return 0;
+    }
+    if (!fullpath_buf(dir, dir_resolved, sizeof(dir_resolved))) {
+        return 0;
+    }
+    if (!path_within_base(dir_resolved, cwd)) {
+        return 0;
+    }
+
+    if (snprintf(dst, dst_len, "%s/%s", dir_resolved, base) >= (int)dst_len) {
+        return 0;
+    }
+    return 1;
+}
+
 int main(int argc, char **argv) {
     if (argc != 3) {
         fprintf(stderr, "Usage: %s <input.sp> <output.spc>\n", argv[0]);
         return 1;
     }
 
-    const char *in = argv[1];
-    const char *out = argv[2];
+    const char *in_arg = argv[1];
+    const char *out_arg = argv[2];
+    char in_path[PATH_MAX];
+    char out_path[PATH_MAX];
 
-    if (!is_safe_relative_path(in)) {
-        fprintf(stderr, "spbuild: unsafe input path '%s'\n", in);
+    if (!resolve_input_path(in_arg, in_path, sizeof(in_path))) {
+        fprintf(stderr, "spbuild: unsafe input path '%s'\n", in_arg);
         return 1;
     }
 
-    if (!is_safe_relative_path(out)) {
-        fprintf(stderr, "spbuild: unsafe output path '%s'\n", out);
+    if (!resolve_output_path(out_arg, out_path, sizeof(out_path))) {
+        fprintf(stderr, "spbuild: unsafe output path '%s'\n", out_arg);
         return 1;
     }
 
-    char *src = read_file(in);
+    char *src = read_file(in_path);
     if (!src) {
-        fprintf(stderr, "spbuild: cannot read %s\n", in);
+        fprintf(stderr, "spbuild: cannot read %s\n", in_arg);
         return 1;
     }
 
@@ -832,8 +937,8 @@ int main(int argc, char **argv) {
 
     ASTNode *root = parse_program(&tv);
 
-    if (!write_spc(out, root)) {
-        fprintf(stderr, "spbuild: failed to write %s\n", out);
+    if (!write_spc(out_path, root)) {
+        fprintf(stderr, "spbuild: failed to write %s\n", out_arg);
         free_ast(root);
         tv_free(&tv);
         free(src);

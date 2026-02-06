@@ -4,6 +4,21 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+#include <limits.h>
+#include <unistd.h>
+#ifdef _WIN32
+#include <direct.h>
+#endif
+
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
+
+#ifdef _WIN32
+#define splice_getcwd _getcwd
+#else
+#define splice_getcwd getcwd
+#endif
 
 #include "splice.h"
 #include "sdk.h"
@@ -28,24 +43,24 @@ static void success(int ln, const char *fmt, ...) {
 
 /* Basic validation to reduce path traversal risk.
    Allows only non-empty relative paths and rejects any ".." component. */
-static int is_safe_relative_path(const char *path) {
-    if (path == NULL || *path == '\0') {
+static int is_safe_relative_path(const char *arg) {
+    if (arg == NULL || *arg == '\0') {
         return 0;
     }
 
     /* Reject absolute POSIX-style paths. */
-    if (path[0] == '/') {
+    if (arg[0] == '/') {
         return 0;
     }
 
     /* Rudimentary check against Windows drive letters like "C:" or "C:\". */
-    if (((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z')) &&
-        path[1] == ':') {
+    if (((arg[0] >= 'A' && arg[0] <= 'Z') || (arg[0] >= 'a' && arg[0] <= 'z')) &&
+        arg[1] == ':') {
         return 0;
     }
 
     /* Scan components separated by '/' or '\\' and reject any that are exactly "..". */
-    const char *p = path;
+    const char *p = arg;
     while (*p) {
         while (*p == '/' || *p == '\\') {
             p++;
@@ -66,6 +81,45 @@ static int is_safe_relative_path(const char *path) {
     return 1;
 }
 
+static int path_within_base(const char *path, const char *base) {
+    size_t base_len = strlen(base);
+    if (strncmp(path, base, base_len) != 0) {
+        return 0;
+    }
+    return path[base_len] == '\0' || path[base_len] == '/';
+}
+
+static int fullpath_buf(const char *path, char *out, size_t out_sz) {
+#ifdef _WIN32
+    return _fullpath(out, path, out_sz) != NULL;
+#else
+    (void)out_sz;
+    return realpath(path, out) != NULL;
+#endif
+}
+
+static int resolve_input_path(const char *arg, char *dst, size_t dst_len) {
+    if (!is_safe_relative_path(arg)) {
+        return 0;
+    }
+
+    char cwd[PATH_MAX];
+    char resolved[PATH_MAX];
+    if (!splice_getcwd(cwd, sizeof(cwd))) {
+        return 0;
+    }
+    if (!fullpath_buf(arg, resolved, sizeof(resolved))) {
+        return 0;
+    }
+    if (!path_within_base(resolved, cwd)) {
+        return 0;
+    }
+    if (snprintf(dst, dst_len, "%s", resolved) >= (int)dst_len) {
+        return 0;
+    }
+    return 1;
+}
+
 int main(int argc, char **argv) {
     if (argc < 2) {
         fprintf(stderr, "Usage: %s <file.spc>\n", argv[0]);
@@ -77,11 +131,12 @@ int main(int argc, char **argv) {
         return 0;
     }
 
-    const char *path = argv[1];
-    if (!is_safe_relative_path(path)) {
+    char path_buf[PATH_MAX];
+    if (!resolve_input_path(argv[1], path_buf, sizeof(path_buf))) {
         fprintf(stderr, "[ERROR] invalid SPC path\n");
         return 1;
     }
+    const char *path = path_buf;
     const char *ext = strrchr(path, '.');
     if (!ext || strcmp(ext, ".spc") != 0) {
         fprintf(stderr, "[ERROR] only .spc supported by VM now\n");
