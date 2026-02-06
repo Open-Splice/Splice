@@ -3,6 +3,9 @@
 #include <string.h>
 #include <stdint.h>
 #include <ctype.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 /* =========================================================
    This builder emits SPC compatible with the simplified VM
@@ -727,8 +730,13 @@ static void write_node(FILE *f, ASTNode *n) {
 }
 
 static int write_spc(const char *out_path, ASTNode *root) {
-    FILE *f = fopen(out_path, "wb");
-    if (!f) return 0;
+    int fd = open(out_path, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
+    if (fd < 0) return 0;
+    FILE *f = fdopen(fd, "wb");
+    if (!f) {
+        close(fd);
+        return 0;
+    }
     fwrite(SPC_MAGIC, 1, 4, f);
     wr_u8(f, (uint8_t)SPC_VERSION);
     write_node(f, root);
@@ -754,6 +762,46 @@ static char *read_file(const char *path) {
     return buf;
 }
 
+/* Basic validation to reduce path traversal risk.
+   Allows only non-empty relative paths and rejects any ".." component. */
+static int is_safe_relative_path(const char *path) {
+    if (path == NULL || *path == '\0') {
+        return 0;
+    }
+
+    /* Reject absolute POSIX-style paths. */
+    if (path[0] == '/') {
+        return 0;
+    }
+
+    /* Rudimentary check against Windows drive letters like "C:" or "C:\". */
+    if (((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z')) &&
+        path[1] == ':') {
+        return 0;
+    }
+
+    /* Scan components separated by '/' or '\\' and reject any that are exactly "..". */
+    const char *p = path;
+    while (*p) {
+        while (*p == '/' || *p == '\\') {
+            p++;
+        }
+        if (!*p) {
+            break;
+        }
+        const char *start = p;
+        while (*p && *p != '/' && *p != '\\') {
+            p++;
+        }
+        size_t len = (size_t)(p - start);
+        if (len == 2 && start[0] == '.' && start[1] == '.') {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
 int main(int argc, char **argv) {
     if (argc != 3) {
         fprintf(stderr, "Usage: %s <input.sp> <output.spc>\n", argv[0]);
@@ -762,6 +810,16 @@ int main(int argc, char **argv) {
 
     const char *in = argv[1];
     const char *out = argv[2];
+
+    if (!is_safe_relative_path(in)) {
+        fprintf(stderr, "spbuild: unsafe input path '%s'\n", in);
+        return 1;
+    }
+
+    if (!is_safe_relative_path(out)) {
+        fprintf(stderr, "spbuild: unsafe output path '%s'\n", out);
+        return 1;
+    }
 
     char *src = read_file(in);
     if (!src) {

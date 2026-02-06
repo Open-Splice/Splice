@@ -26,6 +26,46 @@ static void success(int ln, const char *fmt, ...) {
    CLI VM entry
    ========================= */
 
+/* Basic validation to reduce path traversal risk.
+   Allows only non-empty relative paths and rejects any ".." component. */
+static int is_safe_relative_path(const char *path) {
+    if (path == NULL || *path == '\0') {
+        return 0;
+    }
+
+    /* Reject absolute POSIX-style paths. */
+    if (path[0] == '/') {
+        return 0;
+    }
+
+    /* Rudimentary check against Windows drive letters like "C:" or "C:\". */
+    if (((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z')) &&
+        path[1] == ':') {
+        return 0;
+    }
+
+    /* Scan components separated by '/' or '\\' and reject any that are exactly "..". */
+    const char *p = path;
+    while (*p) {
+        while (*p == '/' || *p == '\\') {
+            p++;
+        }
+        if (!*p) {
+            break;
+        }
+        const char *start = p;
+        while (*p && *p != '/' && *p != '\\') {
+            p++;
+        }
+        size_t len = (size_t)(p - start);
+        if (len == 2 && start[0] == '.' && start[1] == '.') {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
 int main(int argc, char **argv) {
     if (argc < 2) {
         fprintf(stderr, "Usage: %s <file.spc>\n", argv[0]);
@@ -38,6 +78,10 @@ int main(int argc, char **argv) {
     }
 
     const char *path = argv[1];
+    if (!is_safe_relative_path(path)) {
+        fprintf(stderr, "[ERROR] invalid SPC path\n");
+        return 1;
+    }
     const char *ext = strrchr(path, '.');
     if (!ext || strcmp(ext, ".spc") != 0) {
         fprintf(stderr, "[ERROR] only .spc supported by VM now\n");

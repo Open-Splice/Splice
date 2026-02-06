@@ -191,6 +191,7 @@ static ASTNode *get_func(const char *name) {
 
 #define SPC_MAGIC "SPC\0"
 #define SPC_VERSION 1
+#define SPLICE_MAX_STRING_LEN (64 * 1024 - 1)
 
 typedef struct {
     const unsigned char *data;
@@ -214,8 +215,9 @@ static uint32_t rd_u32(Reader *r) {
 
 static const char *rd_str(Reader *r) {
     uint32_t len = rd_u32(r);
-    if (r->pos + len > r->size) SPLICE_FAIL("SPC_STR");
-    char *s = (char *)arena_alloc(len + 1);
+    if (len > r->size - r->pos) SPLICE_FAIL("SPC_STR");
+    if (len > SPLICE_MAX_STRING_LEN) SPLICE_FAIL("SPC_STR_LEN");
+    char *s = (char *)arena_alloc((size_t)len + 1);
     memcpy(s, r->data + r->pos, len);
     s[len] = 0;
     r->pos += len;
