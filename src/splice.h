@@ -1,116 +1,73 @@
-#ifndef Splice_H
-#define Splice_H
-/* Header-only Splice runtime + AST serialization.
-   - VM loads .spc => AST => interpret
-   - Builder writes AST directly into .spc
-*/
+#ifndef SPLICE_H
+#define SPLICE_H
 
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdarg.h>
-#include <ctype.h>
-#include <setjmp.h>
+#include <stdint.h>
+#include <stdio.h>
 
-#if defined(_WIN32)
-  #include <windows.h>
-#elif !defined(ARDUINO)
-  #include <dlfcn.h>
-#endif
-#ifdef ARDUINO
-  #define SPLICE_HAS_STDIO 0
+#if defined(SPLICE_PLATFORM_ARDUINO)
+  #include <Arduino.h>
+  #define SPLICE_PRINTLN(s) Serial.println(s)
+  #define SPLICE_FAIL(msg) do { Serial.println(msg); while (1) delay(1000); } while (0)
 #else
-  #define SPLICE_HAS_STDIO 1
-#endif
-#if SPLICE_HAS_STDIO
-  #include <stdio.h>
+  #define SPLICE_PRINTLN(s) puts(s)
+  #define SPLICE_FAIL(msg) do { fprintf(stderr, "%s\n", msg); exit(1); } while (0)
 #endif
 
-#ifdef ARDUINO
-#define SPLICE_EMBED 1
-#else
-#define SPLICE_EMBED 0
-#endif
+/* ================= ARENA (RUNTIME ALLOCATED) ================= */
 
+static unsigned char *splice_arena = NULL;
+static size_t splice_arena_size = 0;
+static size_t splice_arena_pos  = 0;
 
-#define MAX_IMPORTS 32
-
-static char *imported_files[MAX_IMPORTS];
-static int imported_count = 0;
-
-
-
-
-
-
-
-
-/* =========================
-   Diagnostics
-   ========================= */
-static inline void error(int ln, const char *fmt, ...) {
-    va_list ap;
-    va_start(ap, fmt);
-    fprintf(stderr, "[ERROR] line %d: ", ln);
-    vfprintf(stderr, fmt, ap);
-    fprintf(stderr, "\n");
-    va_end(ap);
-    exit(1);
-}
-static inline void warn(int ln, const char *fmt, ...) {
-    va_list ap; va_start(ap, fmt);
-    fprintf(stderr, "[WARN]  line %d: ", ln);
-    vfprintf(stderr, fmt, ap);
-    fprintf(stderr, "\n");
-    va_end(ap);
-}
-static inline void info(int ln, const char *fmt, ...) {
-    (void)ln;
-    va_list ap; va_start(ap, fmt);
-    fprintf(stdout, "[INFO] ");
-    vfprintf(stdout, fmt, ap);
-    fprintf(stdout, "\n");
-    va_end(ap);
-}
-static inline void success(int ln, const char *fmt, ...) {
-    (void)ln;
-    va_list ap; va_start(ap, fmt);
-    fprintf(stdout, "[SUCCESS] ");
-    vfprintf(stdout, fmt, ap);
-    fprintf(stdout, "\n");
-    va_end(ap);
+static void arena_init(size_t size) {
+    splice_arena = (unsigned char *)malloc(size);
+    if (!splice_arena) SPLICE_FAIL("ARENA_ALLOC_FAIL");
+    splice_arena_size = size;
+    splice_arena_pos = 0;
+    memset(splice_arena, 0, size);
 }
 
-/* =========================
-   Values / Objects
-   ========================= */
+static void arena_free(void) {
+    free(splice_arena);
+    splice_arena = NULL;
+    splice_arena_size = splice_arena_pos = 0;
+}
+
+static void *arena_alloc(size_t n) {
+    n = (n + 7) & ~7;
+    if (splice_arena_pos + n > splice_arena_size)
+        SPLICE_FAIL("ARENA_OOM");
+    void *p = splice_arena + splice_arena_pos;
+    splice_arena_pos += n;
+    return p;
+}
+
+/* ================= VALUES ================= */
+
 typedef enum { VAL_NUMBER, VAL_STRING, VAL_OBJECT } ValueType;
 
-typedef struct Value {
+typedef struct {
     ValueType type;
     double number;
-    char *string;
+    const char *string;
     void *object;
 } Value;
 
+/* ================= EXEC ================= */
+
 typedef enum {
-    OBJ_ARRAY,
-    OBJ_TUPLE
-} ObjectType;
+    EXEC_OK,
+    EXEC_BREAK,
+    EXEC_CONTINUE,
+    EXEC_RETURN,
+    EXEC_ERROR
+} ExecResult;
 
-typedef struct {
-    ObjectType type;
-    int count;
-    int capacity;
-    Value *items;
-} ObjArray;
+static Value splice_return_value;
 
-/* If you have sdk.h natives, keep it. If not, stub it. */
-#include "sdk.h"
-
-/* =========================
-   AST
-   ========================= */
+/* ================= AST ================= */
 
 typedef enum {
     AST_NUMBER = 0,
@@ -121,26 +78,14 @@ typedef enum {
     AST_ASSIGN,
     AST_BREAK,
     AST_PRINT,
-    AST_READ,
-    AST_WRITE,
     AST_CONTINUE,
-
-    AST_RAISE,
-    AST_WARN,
-    AST_INPUT,
-    AST_INFO,
     AST_WHILE,
     AST_IF,
-    AST_TUPLE,
     AST_STATEMENTS,
     AST_FUNC_DEF,
     AST_FUNCTION_CALL,
     AST_RETURN,
-    AST_IMPORT,
-    AST_FOR,
-    AST_ARRAY_LITERAL,
-    AST_INDEX_EXPR,
-    AST_INDEX_ASSIGN
+    AST_FOR
 } ASTNodeType;
 
 typedef struct ASTNode ASTNode;
@@ -149,1745 +94,363 @@ struct ASTNode {
     ASTNodeType type;
     union {
         double number;
-        char *string;
+        const char *string;
 
-        struct {
-            char *op;       /* "+", "-", "*", "/", "==", "&&", "!" ... */
-            ASTNode *left;
-            ASTNode *right; /* may be NULL for unary */
-        } binop;
-        struct {
-            ASTNode** items;
-            int count;
-        } tuple;
-        struct {
-            char *varname;
-            ASTNode *value;
-        } var;
-
+        struct { const char *op; ASTNode *left; ASTNode *right; } binop;
+        struct { const char *name; ASTNode *value; } var;
         struct { ASTNode *expr; } print;
-        struct { ASTNode *prompt; } input;
-        struct { ASTNode *expr; } raise;
-        struct { ASTNode *expr; } warn;
-        struct { ASTNode *expr; } info;
-        struct { ASTNode *expr; } read;
-        struct { ASTNode *path; ASTNode *value; } write;
-
-
         struct { ASTNode *cond; ASTNode *body; } whilestmt;
-
-        struct {
-            ASTNode *condition;
-            ASTNode *then_branch;
-            ASTNode *else_branch; /* may be NULL */
-        } ifstmt;
-
-        struct {
-            ASTNode **stmts;
-            int count;
-        } statements;
-
-        struct {
-            char *funcname;
-            char **params;
-            int param_count;
-            ASTNode *body;
-        } funcdef;
-
-        struct {
-            char *funcname;
-            ASTNode **args;
-            int arg_count;
-        } funccall;
-
+        struct { ASTNode *cond; ASTNode *then_b; ASTNode *else_b; } ifstmt;
+        struct { ASTNode **stmts; int count; } statements;
+        struct { const char *name; ASTNode *body; } funcdef;
+        struct { const char *name; } funccall;
         struct { ASTNode *expr; } retstmt;
-
-        struct { char *filename; } importstmt;
-
-        struct {
-            char *for_var;
-            ASTNode *for_start;
-            ASTNode *for_end;
-            ASTNode *for_body;
-        } forstmt;
-
-        struct {
-            ASTNode **elements;
-            int count;
-        } arraylit;
-
-        struct {
-            ASTNode *target;
-            ASTNode *index;
-        } indexexpr;
-
-        struct {
-            ASTNode *target;
-            ASTNode *index;
-            ASTNode *value;
-        } indexassign;
+        struct { const char *var; ASTNode *start; ASTNode *end; ASTNode *body; } forstmt;
     };
 };
-typedef struct {
-    ASTNode** items;
-    int count;
-} ASTTuple;
-/* =========================
-   Env (vars + funcs)
-   ========================= */
-static jmp_buf return_buf;
-static Value   return_value;
-static jmp_buf *break_buf = NULL;
-static jmp_buf *continue_buf = NULL;
-typedef enum { VAR_NUMBER, VAR_STRING, VAR_OBJECT } VarType;
-typedef struct {
-    char  *name;
-    VarType type;
-    double value;
-    char  *str;
-    void  *obj;
-} Var;
 
-#define VAR_TABLE_SIZE 256   /* power of 2 = fast modulo */
+/* ================= VARIABLES ================= */
+
+#define VAR_TABLE_SIZE 64
 
 typedef struct {
-    char   *name;   /* interned or strdup */
-    VarType type;
-    double value;
-    char   *str;
-    void   *obj;
-    int     used;
+    const char *name;
+    Value value;
+    int used;
 } VarSlot;
 
 static VarSlot var_table[VAR_TABLE_SIZE];
-static inline unsigned hash_str(const char *s) {
+
+static unsigned hash_str(const char *s) {
     unsigned h = 2166136261u;
-    while (*s) {
-        h ^= (unsigned char)*s++;
-        h *= 16777619u;
-    }
+    while (*s) { h ^= (unsigned char)*s++; h *= 16777619u; }
     return h;
 }
-static inline Var* var_number(double d) {
-    Var *v = malloc(sizeof(Var));
-    v->name = NULL;
-    v->type = VAR_NUMBER;
-    v->value = d;
-    v->str = NULL;
-    v->obj = NULL;
-    return v;
-}
 
-
-static inline VarSlot *get_var(const char *name) {
-    if (!name) return NULL;
-
-    unsigned h = hash_str(name);
-    unsigned idx = h & (VAR_TABLE_SIZE - 1);
-
-    for (unsigned i = 0; i < VAR_TABLE_SIZE; i++) {
-        VarSlot *v = &var_table[idx];
-
-        if (!v->used)
-            return NULL; /* empty slot = not found */
-
-        if (strcmp(v->name, name) == 0)
-            return v;
-
-        idx = (idx + 1) & (VAR_TABLE_SIZE - 1); /* linear probe */
-    }
-    return NULL;
-}
-
-
-
-static inline void free_object(void *obj) {
-    if (!obj) return;
-    ObjArray *oa = (ObjArray*)obj;
-    if (oa->type == OBJ_ARRAY) {
-        for (int j = 0; j < oa->count; ++j) {
-            if (oa->items[j].type == VAL_STRING) free(oa->items[j].string);
-        }
-        free(oa->items);
-    }
-    free(oa);
-}
-
-static inline void set_var_object(const char *name, void *obj) {
-    if (!name) error(0, "Splice/NullError set_var_object: NULL name");
-
-    unsigned h = hash_str(name);
-    unsigned idx = h & (VAR_TABLE_SIZE - 1);
-
+static VarSlot *get_var(const char *name) {
+    unsigned i = hash_str(name) & (VAR_TABLE_SIZE - 1);
     for (;;) {
-        VarSlot *v = &var_table[idx];
-
-        if (!v->used) {
-            v->used = 1;
-            v->name = strdup(name);
-            v->type = VAR_OBJECT;
-            v->obj  = obj;
-            v->str  = NULL;
-            v->value = 0;
-            return;
-        }
-
-        if (strcmp(v->name, name) == 0) {
-            if (v->type == VAR_STRING) free(v->str);
-            v->type = VAR_OBJECT;
-            v->obj  = obj;
-            return;
-        }
-
-        idx = (idx + 1) & (VAR_TABLE_SIZE - 1);
+        VarSlot *v = &var_table[i];
+        if (!v->used) return NULL;
+        if (strcmp(v->name, name) == 0) return v;
+        i = (i + 1) & (VAR_TABLE_SIZE - 1);
     }
 }
 
-
-
-static inline void set_var(
-    const char *name,
-    VarType type,
-    double value,
-    const char *str
-) {
-    if (!name) error(0, "Splice/NullError set_var: NULL name");
-
-    unsigned h = hash_str(name);
-    unsigned idx = h & (VAR_TABLE_SIZE - 1);
-
+static void set_var(const char *name, Value v) {
+    unsigned i = hash_str(name) & (VAR_TABLE_SIZE - 1);
     for (;;) {
-        VarSlot *v = &var_table[idx];
-
-        if (!v->used) {
-            v->used = 1;
-            v->name = strdup(name);
-            v->type = type;
-            v->value = value;
-            v->str = (type == VAR_STRING) ? strdup(str ? str : "") : NULL;
-            v->obj = NULL;
+        VarSlot *s = &var_table[i];
+        if (!s->used || strcmp(s->name, name) == 0) {
+            s->used = 1;
+            s->name = name;
+            s->value = v;
             return;
         }
-
-        if (strcmp(v->name, name) == 0) {
-            if (v->type == VAR_STRING) free(v->str);
-            v->type = type;
-            v->value = value;
-            v->str = (type == VAR_STRING) ? strdup(str ? str : "") : NULL;
-            return;
-        }
-
-        idx = (idx + 1) & (VAR_TABLE_SIZE - 1);
+        i = (i + 1) & (VAR_TABLE_SIZE - 1);
     }
 }
 
+/* ================= FUNCTIONS ================= */
 
-
-/* =========================
-   Forward declarations
-   ========================= */
-
-static inline ASTNode *ast_new(ASTNodeType t);
-static inline void free_ast(ASTNode *node);
-static ASTNode *clone_ast(const ASTNode *n);
-
-static inline void interpret(ASTNode *node);
-#define MAX_FUNCS 32
-typedef struct { char *name; ASTNode *def; } Func;
-#define FUNC_TABLE_SIZE 128
+#define FUNC_TABLE_SIZE 32
 
 typedef struct {
-    char *name;
-    ASTNode *def;
+    const char *name;
+    ASTNode *body;
     int used;
 } FuncSlot;
 
 static FuncSlot func_table[FUNC_TABLE_SIZE];
 
-
-static inline void add_func(const char *name, ASTNode *def) {
-    if (!name) error(0, "Splice/NullError add_func: NULL name");
-
-    unsigned idx = hash_str(name) & (FUNC_TABLE_SIZE - 1);
-
+static void add_func(const char *name, ASTNode *body) {
+    unsigned i = hash_str(name) & (FUNC_TABLE_SIZE - 1);
     for (;;) {
-        FuncSlot *f = &func_table[idx];
-
-        if (!f->used) {
+        FuncSlot *f = &func_table[i];
+        if (!f->used || strcmp(f->name, name) == 0) {
             f->used = 1;
-            f->name = strdup(name);
-            f->def  = def;
+            f->name = name;
+            f->body = body;
             return;
         }
-
-        if (strcmp(f->name, name) == 0) {
-            f->def = def;   // overwrite allowed
-            return;
-        }
-
-        idx = (idx + 1) & (FUNC_TABLE_SIZE - 1);
+        i = (i + 1) & (FUNC_TABLE_SIZE - 1);
     }
 }
 
-
-
-static inline ASTNode *get_func(const char *name) {
-    if (!name) return NULL;
-
-    unsigned idx = hash_str(name) & (FUNC_TABLE_SIZE - 1);
-
-    for (unsigned i = 0; i < FUNC_TABLE_SIZE; i++) {
-        FuncSlot *f = &func_table[idx];
-
-        if (!f->used)
-            return NULL;
-
-        if (strcmp(f->name, name) == 0)
-            return f->def;
-
-        idx = (idx + 1) & (FUNC_TABLE_SIZE - 1);
+static ASTNode *get_func(const char *name) {
+    unsigned i = hash_str(name) & (FUNC_TABLE_SIZE - 1);
+    for (;;) {
+        FuncSlot *f = &func_table[i];
+        if (!f->used) return NULL;
+        if (strcmp(f->name, name) == 0) return f->body;
+        i = (i + 1) & (FUNC_TABLE_SIZE - 1);
     }
-
-    return NULL;
 }
 
+/* ================= SPC LOADER ================= */
 
-
-
-static ASTNode *clone_ast(const ASTNode *n) {
-    if (!n) return NULL;
-
-    ASTNode *c = ast_new(n->type);
-
-    switch (n->type) {
-
-        case AST_NUMBER:
-            c->number = n->number;
-            break;
-
-        case AST_STRING:
-        case AST_IDENTIFIER:
-            c->string = n->string ? strdup(n->string) : NULL;
-            break;
-
-        case AST_BINARY_OP:
-            c->binop.op = strdup(n->binop.op);
-            c->binop.left  = clone_ast(n->binop.left);
-            c->binop.right = clone_ast(n->binop.right);
-            break;
-
-        case AST_LET:
-        case AST_ASSIGN:
-            c->var.varname = strdup(n->var.varname);
-            c->var.value   = clone_ast(n->var.value);
-            break;
-
-        case AST_PRINT:
-            c->print.expr = clone_ast(n->print.expr);
-            break;
-
-        case AST_INPUT:
-            c->input.prompt = clone_ast(n->input.prompt);
-            break;
-
-        case AST_RAISE:
-            c->raise.expr = clone_ast(n->raise.expr);
-            break;
-
-        case AST_WARN:
-            c->warn.expr = clone_ast(n->warn.expr);
-            break;
-
-        case AST_INFO:
-            c->info.expr = clone_ast(n->info.expr);
-            break;
-
-        case AST_READ:
-            c->read.expr = clone_ast(n->read.expr);
-            break;
-
-        case AST_WRITE:
-            c->write.path  = clone_ast(n->write.path);
-            c->write.value = clone_ast(n->write.value);
-            break;
-
-        case AST_WHILE:
-            c->whilestmt.cond = clone_ast(n->whilestmt.cond);
-            c->whilestmt.body = clone_ast(n->whilestmt.body);
-            break;
-
-        case AST_IF:
-            c->ifstmt.condition   = clone_ast(n->ifstmt.condition);
-            c->ifstmt.then_branch = clone_ast(n->ifstmt.then_branch);
-            c->ifstmt.else_branch = clone_ast(n->ifstmt.else_branch);
-            break;
-
-        case AST_STATEMENTS:
-            c->statements.count = n->statements.count;
-            c->statements.stmts =
-                (ASTNode**)calloc(c->statements.count, sizeof(ASTNode*));
-            for (int i = 0; i < c->statements.count; i++)
-                c->statements.stmts[i] =
-                    clone_ast(n->statements.stmts[i]);
-            break;
-
-        case AST_FUNC_DEF:
-            c->funcdef.funcname = strdup(n->funcdef.funcname);
-            c->funcdef.param_count = n->funcdef.param_count;
-            c->funcdef.params =
-                (char**)calloc(c->funcdef.param_count, sizeof(char*));
-            for (int i = 0; i < c->funcdef.param_count; i++)
-                c->funcdef.params[i] =
-                    strdup(n->funcdef.params[i]);
-            c->funcdef.body = clone_ast(n->funcdef.body);
-            break;
-
-        case AST_FUNCTION_CALL:
-            c->funccall.funcname = strdup(n->funccall.funcname);
-            c->funccall.arg_count = n->funccall.arg_count;
-            c->funccall.args =
-                (ASTNode**)calloc(c->funccall.arg_count, sizeof(ASTNode*));
-            for (int i = 0; i < c->funccall.arg_count; i++)
-                c->funccall.args[i] =
-                    clone_ast(n->funccall.args[i]);
-            break;
-
-        case AST_RETURN:
-            c->retstmt.expr = clone_ast(n->retstmt.expr);
-            break;
-
-        case AST_IMPORT:
-            c->importstmt.filename = strdup(n->importstmt.filename);
-            break;
-
-        case AST_FOR:
-            c->forstmt.for_var   = strdup(n->forstmt.for_var);
-            c->forstmt.for_start = clone_ast(n->forstmt.for_start);
-            c->forstmt.for_end   = clone_ast(n->forstmt.for_end);
-            c->forstmt.for_body  = clone_ast(n->forstmt.for_body);
-            break;
-
-        case AST_ARRAY_LITERAL:
-            c->arraylit.count = n->arraylit.count;
-            c->arraylit.elements =
-                (ASTNode**)calloc(c->arraylit.count, sizeof(ASTNode*));
-            for (int i = 0; i < c->arraylit.count; i++)
-                c->arraylit.elements[i] =
-                    clone_ast(n->arraylit.elements[i]);
-            break;
-
-        case AST_INDEX_EXPR:
-            c->indexexpr.target = clone_ast(n->indexexpr.target);
-            c->indexexpr.index  = clone_ast(n->indexexpr.index);
-            break;
-
-        case AST_INDEX_ASSIGN:
-            c->indexassign.target = clone_ast(n->indexassign.target);
-            c->indexassign.index  = clone_ast(n->indexassign.index);
-            c->indexassign.value  = clone_ast(n->indexassign.value);
-            break;
-
-        default:
-            error(0, "Splice/VMError clone_ast: unsupported AST node %d", n->type);
-    }
-
-    return c;
-}
-static int strcmp_ptr(const void *a, const void *b) {
-    return strcmp(*(char**)a, *(char**)b);
-}
-
-static int already_imported(const char *path) {
-    return bsearch(
-        &path,
-        imported_files,
-        imported_count,
-        sizeof(char*),
-        strcmp_ptr
-    ) != NULL;
-}
-
-
-/* =========================
-   AST alloc/free
-   ========================= */
-static inline ASTNode *ast_new(ASTNodeType t) {
-    ASTNode *n = (ASTNode*)calloc(1, sizeof(ASTNode));
-    if (!n) error(0, "Splice/SystemError OOM allocating ASTNode");
-    n->type = t;
-    return n;
-}
-
-static inline void free_ast(ASTNode *node) {
-    if (!node) return;
-    switch (node->type) {
-        case AST_STRING:
-        case AST_IDENTIFIER:
-            free(node->string);
-            break;
-        case AST_TUPLE:
-            for (int i = 0; i < node->tuple.count; i++)
-                free_ast(node->tuple.items[i]);
-            free(node->tuple.items);
-            break;
-
-        case AST_BINARY_OP:
-            free(node->binop.op);
-            free_ast(node->binop.left);
-            free_ast(node->binop.right);
-            break;
-
-        case AST_LET:
-        case AST_ASSIGN:
-            free(node->var.varname);
-            free_ast(node->var.value);
-            break;
-
-        case AST_PRINT: free_ast(node->print.expr); break;
-        case AST_INPUT: free_ast(node->input.prompt); break;
-        case AST_RAISE: free_ast(node->raise.expr); break;
-        case AST_WARN:  free_ast(node->warn.expr);  break;
-        case AST_INFO:  free_ast(node->info.expr);  break;
-
-        case AST_WHILE:
-            free_ast(node->whilestmt.cond);
-            free_ast(node->whilestmt.body);
-            break;
-
-        case AST_IF:
-            free_ast(node->ifstmt.condition);
-            free_ast(node->ifstmt.then_branch);
-            free_ast(node->ifstmt.else_branch);
-            break;
-
-        case AST_STATEMENTS:
-            for (int j = 0; j < node->statements.count; ++j)
-                free_ast(node->statements.stmts[j]);
-            free(node->statements.stmts);
-            break;
-
-        case AST_FUNC_DEF:
-            free(node->funcdef.funcname);
-            for (int j = 0; j < node->funcdef.param_count; ++j) free(node->funcdef.params[j]);
-            free(node->funcdef.params);
-            free_ast(node->funcdef.body);
-            break;
-
-        case AST_FUNCTION_CALL:
-            free(node->funccall.funcname);
-            for (int j = 0; j < node->funccall.arg_count; ++j) free_ast(node->funccall.args[j]);
-            free(node->funccall.args);
-            break;
-
-        case AST_RETURN:
-            free_ast(node->retstmt.expr);
-            break;
-
-        case AST_IMPORT:
-            free(node->importstmt.filename);
-            break;
-
-        case AST_FOR:
-            free(node->forstmt.for_var);
-            free_ast(node->forstmt.for_start);
-            free_ast(node->forstmt.for_end);
-            free_ast(node->forstmt.for_body);
-            break;
-
-        case AST_ARRAY_LITERAL:
-            for (int j = 0; j < node->arraylit.count; ++j) free_ast(node->arraylit.elements[j]);
-            free(node->arraylit.elements);
-            break;
-
-        case AST_INDEX_EXPR:
-            free_ast(node->indexexpr.target);
-            free_ast(node->indexexpr.index);
-            break;
-
-        case AST_INDEX_ASSIGN:
-            free_ast(node->indexassign.target);
-            free_ast(node->indexassign.index);
-            free_ast(node->indexassign.value);
-            break;
-
-        default:
-            break;
-    }
-    free(node);
-}
-
-/* =========================
-   AST serialization helpers
-   ========================= */
-#define SPC_MAGIC "SPC"
+#define SPC_MAGIC "SPC\0"
 #define SPC_VERSION 1
-#define AST_NULL_SENTINEL 0xFF
+#define SPLICE_MAX_STRING_LEN (64 * 1024 - 1)
 
-static inline void w_u8(FILE *f, unsigned char v) {
-    if (fputc(v, f) == EOF) error(0, "Splice/SystemError write u8 failed");
-}
-static inline void w_u32(FILE *f, unsigned int v) {
-    if (fwrite(&v, 4, 1, f) != 1) error(0, "Splice/SystemError write u32 failed");
-}
-static inline void w_u16(FILE *f, unsigned short v) {
-    if (fwrite(&v, 2, 1, f) != 1) error(0, "Splice/SystemError write u16 failed");
-}
-static inline void w_double(FILE *f, double d) {
-    if (fwrite(&d, sizeof(double), 1, f) != 1) error(0, "Splice/SystemError write double failed");
-}
-static inline void w_str(FILE *f, const char *s) {
-    if (!s) s = "";
-    unsigned short len = (unsigned short)strlen(s);
-    w_u16(f, len);
-    if (len && fwrite(s, 1, len, f) != len) error(0, "Splice/SystemError write string failed");
-}
-
-static inline unsigned char r_u8(FILE *f) {
-    int c = fgetc(f);
-    if (c == EOF) error(0, "Splice/SyntaxError Unexpected EOF (u8)");
-    return (unsigned char)c;
-}
-static inline unsigned int r_u32(FILE *f) {
-    unsigned int v;
-    if (fread(&v, 4, 1, f) != 1) error(0, "Splice/SyntaxError Unexpected EOF (u32)");
-    return v;
-}
-static inline unsigned short r_u16(FILE *f) {
-    unsigned short v;
-    if (fread(&v, 2, 1, f) != 1) error(0, "Splice/SyntaxError Unexpected EOF (u16)");
-    return v;
-}
-static inline double r_double(FILE *f) {
-    double d;
-    if (fread(&d, sizeof(double), 1, f) != 1) error(0, "Splice/SyntaxError Unexpected EOF (double)");
-    return d;
-}
-static inline char *r_str(FILE *f) {
-    unsigned short len = r_u16(f);
-    char *s = (char*)malloc((size_t)len + 1);
-    if (!s) error(0, "OOM reading string");
-    if (len && fread(s, 1, len, f) != len) error(0, "Splice/SyntaxError Unexpected EOF (string)");
-    s[len] = 0;
-    return s;
-}
-
-static void write_ast_node(FILE *f, const ASTNode *n);
-
-static void write_ast_node(FILE *f, const ASTNode *n) {
-    if (!n) { w_u8(f, AST_NULL_SENTINEL); return; }
-    w_u8(f, (unsigned char)n->type);
-
-    switch (n->type) {
-        case AST_NUMBER: w_double(f, n->number); break;
-
-        case AST_STRING:
-        case AST_IDENTIFIER:
-            w_str(f, n->string);
-            break;
-        case AST_BREAK:
-            /* nothing to write */
-            break;
-        case AST_CONTINUE:
-            break;
-
-        case AST_BINARY_OP:
-            w_str(f, n->binop.op);
-            write_ast_node(f, n->binop.left);
-            write_ast_node(f, n->binop.right);
-            break;
-        case AST_READ:
-            write_ast_node(f, n->read.expr);
-            break;
-        case AST_TUPLE:
-            w_u32(f, (unsigned int)n->tuple.count);
-            for (int i = 0; i < n->tuple.count; i++)
-                write_ast_node(f, n->tuple.items[i]);
-            break;
-
-        case AST_WRITE:
-            write_ast_node(f, n->write.path);
-            write_ast_node(f, n->write.value);
-            break;
-
-        case AST_PRINT: write_ast_node(f, n->print.expr); break;
-        case AST_INPUT: write_ast_node(f, n->input.prompt); break;
-        case AST_RAISE: write_ast_node(f, n->raise.expr); break;
-        case AST_WARN:  write_ast_node(f, n->warn.expr);  break;
-        case AST_INFO:  write_ast_node(f, n->info.expr);  break;
-
-        case AST_LET:
-        case AST_ASSIGN:
-            w_str(f, n->var.varname);
-            write_ast_node(f, n->var.value);
-            break;
-
-        case AST_RETURN:
-            write_ast_node(f, n->retstmt.expr);
-            break;
-
-        case AST_WHILE:
-            write_ast_node(f, n->whilestmt.cond);
-            write_ast_node(f, n->whilestmt.body);
-            break;
-
-        case AST_IF:
-            write_ast_node(f, n->ifstmt.condition);
-            write_ast_node(f, n->ifstmt.then_branch);
-            write_ast_node(f, n->ifstmt.else_branch);
-            break;
-
-        case AST_FOR:
-            w_str(f, n->forstmt.for_var);
-            write_ast_node(f, n->forstmt.for_start);
-            write_ast_node(f, n->forstmt.for_end);
-            write_ast_node(f, n->forstmt.for_body);
-            break;
-
-        case AST_ARRAY_LITERAL:
-            w_u32(f, (unsigned int)n->arraylit.count);
-            for (int i = 0; i < n->arraylit.count; ++i) write_ast_node(f, n->arraylit.elements[i]);
-            break;
-
-        case AST_INDEX_EXPR:
-            write_ast_node(f, n->indexexpr.target);
-            write_ast_node(f, n->indexexpr.index);
-            break;
-
-        case AST_INDEX_ASSIGN:
-            write_ast_node(f, n->indexassign.target);
-            write_ast_node(f, n->indexassign.index);
-            write_ast_node(f, n->indexassign.value);
-            break;
-
-        case AST_FUNC_DEF:
-            w_str(f, n->funcdef.funcname);
-            w_u32(f, (unsigned int)n->funcdef.param_count);
-            for (int i = 0; i < n->funcdef.param_count; ++i) w_str(f, n->funcdef.params[i]);
-            write_ast_node(f, n->funcdef.body);
-            break;
-
-        case AST_FUNCTION_CALL:
-            w_str(f, n->funccall.funcname);
-            w_u32(f, (unsigned int)n->funccall.arg_count);
-            for (int i = 0; i < n->funccall.arg_count; ++i) write_ast_node(f, n->funccall.args[i]);
-            break;
-
-        case AST_STATEMENTS:
-            w_u32(f, (unsigned int)n->statements.count);
-            for (int i = 0; i < n->statements.count; ++i) write_ast_node(f, n->statements.stmts[i]);
-            break;
-
-        case AST_IMPORT:
-            w_str(f, n->importstmt.filename);
-            break;
-
-        default:
-            error(0, "Splice/SystemError write_ast_node: unsupported type %d", (int)n->type);
-    }
-}
-
-static ASTNode *read_ast_node(FILE *f);
-
-static ASTNode *read_ast_node(FILE *f) {
-    unsigned char t = r_u8(f);
-    if (t == AST_NULL_SENTINEL) return NULL;
-
-    ASTNodeType type = (ASTNodeType)t;
-    ASTNode *n = ast_new(type);
-
-    switch (type) {
-        case AST_READ:
-            n->read.expr = read_ast_node(f);
-            break;
-        case AST_BREAK:
-            /* nothing to read */
-            break;
-
-        case AST_WRITE:
-            n->write.path  = read_ast_node(f);
-            n->write.value = read_ast_node(f);
-            break;
-
-        case AST_NUMBER:
-            n->number = r_double(f);
-            break;
-        case AST_TUPLE: {
-            unsigned int c = r_u32(f);
-            n->tuple.count = (int)c;
-            n->tuple.items =
-                (ASTNode**)calloc(c ? c : 1, sizeof(ASTNode*));
-            for (unsigned int i = 0; i < c; i++)
-                n->tuple.items[i] = read_ast_node(f);
-            break;
-        }
-        case AST_CONTINUE:
-            break;
-
-        case AST_STRING:
-        case AST_IDENTIFIER:
-            n->string = r_str(f);
-            break;
-
-        case AST_BINARY_OP:
-            n->binop.op = r_str(f);
-            n->binop.left  = read_ast_node(f);
-            n->binop.right = read_ast_node(f);
-            break;
-
-        case AST_PRINT: n->print.expr = read_ast_node(f); break;
-        case AST_INPUT: n->input.prompt = read_ast_node(f); break;
-        case AST_RAISE: n->raise.expr = read_ast_node(f); break;
-        case AST_WARN:  n->warn.expr  = read_ast_node(f); break;
-        case AST_INFO:  n->info.expr  = read_ast_node(f); break;
-
-        case AST_LET:
-        case AST_ASSIGN:
-            n->var.varname = r_str(f);
-            n->var.value   = read_ast_node(f);
-            break;
-
-        case AST_RETURN:
-            n->retstmt.expr = read_ast_node(f);
-            break;
-
-        case AST_WHILE:
-            n->whilestmt.cond = read_ast_node(f);
-            n->whilestmt.body = read_ast_node(f);
-            break;
-
-        case AST_IF:
-            n->ifstmt.condition   = read_ast_node(f);
-            n->ifstmt.then_branch = read_ast_node(f);
-            n->ifstmt.else_branch = read_ast_node(f);
-            break;
-
-        case AST_FOR:
-            n->forstmt.for_var   = r_str(f);
-            n->forstmt.for_start = read_ast_node(f);
-            n->forstmt.for_end   = read_ast_node(f);
-            n->forstmt.for_body  = read_ast_node(f);
-            break;
-
-        case AST_ARRAY_LITERAL: {
-            unsigned int count = r_u32(f);
-            n->arraylit.count = (int)count;
-            n->arraylit.elements = (ASTNode**)calloc(count ? count : 1, sizeof(ASTNode*));
-            if (!n->arraylit.elements) error(0, "Splice/SystemError OOM arraylit elements");
-            for (unsigned int i = 0; i < count; ++i) n->arraylit.elements[i] = read_ast_node(f);
-            break;
-        }
-
-        case AST_INDEX_EXPR:
-            n->indexexpr.target = read_ast_node(f);
-            n->indexexpr.index  = read_ast_node(f);
-            break;
-
-        case AST_INDEX_ASSIGN:
-            n->indexassign.target = read_ast_node(f);
-            n->indexassign.index  = read_ast_node(f);
-            n->indexassign.value  = read_ast_node(f);
-            break;
-
-        case AST_FUNC_DEF: {
-            n->funcdef.funcname = r_str(f);
-            unsigned int pc = r_u32(f);
-            n->funcdef.param_count = (int)pc;
-            n->funcdef.params = (char**)calloc(pc ? pc : 1, sizeof(char*));
-            if (!n->funcdef.params) error(0, "Splice/SystemError OOM func params");
-            for (unsigned int i = 0; i < pc; ++i) n->funcdef.params[i] = r_str(f);
-            n->funcdef.body = read_ast_node(f);
-            break;
-        }
-
-        case AST_FUNCTION_CALL: {
-            n->funccall.funcname = r_str(f);
-            unsigned int ac = r_u32(f);
-            n->funccall.arg_count = (int)ac;
-            n->funccall.args = (ASTNode**)calloc(ac ? ac : 1, sizeof(ASTNode*));
-            if (!n->funccall.args) error(0, "Splice/SystemError OOM funccall args");
-            for (unsigned int i = 0; i < ac; ++i) n->funccall.args[i] = read_ast_node(f);
-            break;
-        }
-
-        case AST_STATEMENTS: {
-            unsigned int c = r_u32(f);
-            n->statements.count = (int)c;
-            n->statements.stmts = (ASTNode**)calloc(c ? c : 1, sizeof(ASTNode*));
-            if (!n->statements.stmts) error(0, "Splice/SystemError OOM statements");
-            for (unsigned int i = 0; i < c; ++i) n->statements.stmts[i] = read_ast_node(f);
-            break;
-        }
-
-        case AST_IMPORT:
-            n->importstmt.filename = r_str(f);
-            break;
-
-        default:
-            error(0, "Splice/SystemError read_ast_node: unknown type %d", (int)type);
-    }
-    return n;
-}
-
-
-
-/* Public: VM helper */
-#if !SPLICE_EMBED
-static inline ASTNode *read_ast_from_spc(const char *filename) {
-    FILE *f = fopen(filename, "rb");
-    if (!f) { error(0, "Splice/SPCError Could not open bytecode file: %s", filename); return NULL; }
-
-    char magic[5] = {0};
-    if (fread(magic, 1, 4, f) != 4) error(0, "Splice/SPCError Invalid SPC (short)");
-    if (memcmp(magic, SPC_MAGIC, 4) != 0) error(0, "Splice/SPCError Invalid SPC magic");
-
-    unsigned char ver = r_u8(f);
-    if (ver != SPC_VERSION) error(0, "Splice/SPCError Unsupported SPC version: %u", ver);
-    ASTNode *root = read_ast_node(f);
-    fclose(f);
-    return root;
-}
-#endif
-
-/* =========================
-   Runtime eval/interpret
-   ========================= */
-static inline void print_value(Value v) {
-    if (v.type == VAL_STRING) {
-        printf("%s\n", v.string ? v.string : "");
-    } else if (v.type == VAL_NUMBER) {
-        printf("%g\n", v.number);
-    } else {
-        printf("<object>\n");
-    }
-}
-
-static inline char *eval_to_string(ASTNode *node);
-
-static inline Value eval(ASTNode *node) {
-    if (!node) {
-        Value tmp;
-        tmp.type = VAL_NUMBER;
-        tmp.number = 0;
-        return tmp;
-    }
-
-    switch (node->type) {
-        case AST_READ: {
-            char *path = eval_to_string(node->read.expr);
-#ifndef SPLICE_EMBED
-            FILE *f = fopen(path, "rb");
-            if (!f) {
-                free(path);
-                Value tmp;
-                tmp.type = VAL_STRING;
-                tmp.string = strdup("");
-                return tmp;
-            }
-
-            fseek(f, 0, SEEK_END);
-            long size = ftell(f);
-            rewind(f);
-
-            char *buf = (char*)malloc(size + 1);
-            if (!buf) error(0, "Splice/SystemError OOM in read()");
-            fread(buf, 1, size, f);
-            buf[size] = 0;
-
-            fclose(f);
-            free(path);
-
-            Value tmp;
-            tmp.type = VAL_STRING;
-            tmp.string = buf;
-            return tmp;
-#else
-            free(path);
-            Value tmp;
-            tmp.type = VAL_STRING;
-            tmp.string = strdup("");
-            return tmp;
-#endif
-        }
-
-        case AST_NUMBER: {
-            Value tmp;
-            tmp.type = VAL_NUMBER;
-            tmp.number = node->number;
-            return tmp;
-        }
-        case AST_TUPLE: {
-            ObjArray *oa = (ObjArray*)calloc(1, sizeof(ObjArray));
-            if (!oa) error(0, "Splice/SystemError OOM tuple");
-
-            oa->type = OBJ_TUPLE;
-            oa->count = node->tuple.count;
-            oa->capacity = node->tuple.count;
-            oa->items =
-                (Value*)calloc((size_t)(oa->capacity ? oa->capacity : 1), sizeof(Value));
-
-            for (int i = 0; i < node->tuple.count; i++)
-                oa->items[i] = eval(node->tuple.items[i]);
-
-            Value v;
-            v.type = VAL_OBJECT;
-            v.object = oa;
-            return v;
-        }
-
-        case AST_STRING: {
-            Value tmp;
-            tmp.type = VAL_STRING;
-            tmp.string = strdup(node->string ? node->string : "");
-            return tmp;
-        }
-
-        case AST_IDENTIFIER: {
-            VarSlot *slot = get_var(node->string);
-
-            if (!slot) {
-                Value tmp = { .type = VAL_NUMBER, .number = 0 };
-                return tmp;
-            }
-
-            if (slot->type == VAR_STRING) {
-                Value tmp;
-                tmp.type = VAL_STRING;
-                tmp.string = strdup(slot->str ? slot->str : "");
-                return tmp;
-            }
-
-            if (slot->type == VAR_OBJECT) {
-                Value tmp;
-                tmp.type = VAL_OBJECT;
-                tmp.object = slot->obj;
-                return tmp;
-            }
-
-            Value tmp;
-            tmp.type = VAL_NUMBER;
-            tmp.number = slot->value;
-            return tmp;
-        }
-
-
-        case AST_ARRAY_LITERAL: {
-            ObjArray *oa = (ObjArray*)calloc(1, sizeof(ObjArray));
-            if (!oa) error(0, "Splice/SystemError OOM array");
-            oa->type = OBJ_ARRAY;
-            oa->count = node->arraylit.count;
-            oa->capacity = node->arraylit.count;
-            oa->items = (Value*)calloc((size_t)(oa->capacity ? oa->capacity : 1), sizeof(Value));
-            if (!oa->items) error(0, "Splice/SystemError OOM array items");
-            for (int j = 0; j < node->arraylit.count; ++j) oa->items[j] = eval(node->arraylit.elements[j]);
-            Value tmp;
-            tmp.type = VAL_OBJECT;
-            tmp.object = oa;
-            return tmp;
-        }
-
-        case AST_INDEX_EXPR: {
-            Value target = eval(node->indexexpr.target);
-            Value idxv   = eval(node->indexexpr.index);
-            int idx = (int)idxv.number;
-
-            if (target.type != VAL_OBJECT) error(0, "Splice/IndexError index: target is not array");
-            ObjArray *oa = (ObjArray*)target.object;
-            if (!oa || oa->type != OBJ_ARRAY) error(0, "Splice/IndexError index: not an array");
-
-            if (idx < 0 || idx >= oa->count) {
-                Value tmp;
-                tmp.type = VAL_NUMBER;
-                tmp.number = 0;
-                return tmp;
-            }
-            return oa->items[idx];
-        }
-        case AST_INPUT: {
-            char *prompt = eval_to_string(node->input.prompt);
-
-            #if SPLICE_HAS_STDIO
-                printf("%s", prompt);
-                fflush(stdout);
-
-                char buf[1024];
-                if (fgets(buf, sizeof(buf), stdin)) {
-                    size_t len = strlen(buf);
-                    if (len && buf[len - 1] == '\n') buf[len - 1] = 0;
-                } else {
-                    buf[0] = 0;
-                }
-
-                free(prompt);
-
-                Value tmp;
-                tmp.type = VAL_STRING;
-                tmp.string = strdup(buf);
-                return tmp;
-            #else
-                free(prompt);
-                Value tmp;
-                tmp.type = VAL_STRING;
-                tmp.string = strdup("");
-                return tmp;
-            #endif
-        }
-
-        case AST_INDEX_ASSIGN: {
-            if (!node->indexassign.target || node->indexassign.target->type != AST_IDENTIFIER)
-                error(0, "Splice/IndexError index assign: target must be identifier");
-
-            VarSlot *slot = get_var(node->indexassign.target->string);
-            double d = slot ? slot->value : 0.0;
-
-            if (!slot || slot->type != VAR_OBJECT)
-                error(0, "Splice/IndexError index assign: variable is not array");
-
-
-            ObjArray *oa = (ObjArray*)slot->obj;
-            if (oa->type == OBJ_TUPLE) {
-                error(0, "Splice/TypeError cannot assign to tuple (immutable)");
-            }
-
-            int idx = (int)eval(node->indexassign.index).number;
-            Value val = eval(node->indexassign.value);
-
-            if (idx < 0) error(0, "Splice/IndexError index assign: negative index");
-            if (idx >= oa->count) {
-                while (idx >= oa->capacity) {
-                    int newcap = oa->capacity ? oa->capacity * 2 : 4;
-                    Value *ni = (Value*)realloc(oa->items, sizeof(Value) * (size_t)newcap);
-                    if (!ni) error(0, "Splice/SystemError OOM realloc array");
-                    oa->items = ni;
-                    oa->capacity = newcap;
-                }
-                for (int k = oa->count; k <= idx; ++k) {
-                    oa->items[k].type = VAL_NUMBER;
-                    oa->items[k].number = 0;
-                }
-                oa->count = idx + 1;
-            }
-            if (oa->items[idx].type == VAL_STRING) free(oa->items[idx].string);
-            oa->items[idx] = val;
-            Value tmp;
-            tmp.type = VAL_NUMBER;
-            tmp.number = 1;
-            return tmp;
-        }
-
-        case AST_BINARY_OP: {
-            Value left  = eval(node->binop.left);
-            Value right;
-            if (node->binop.right) {
-                right = eval(node->binop.right);
-            } else {
-                right.type = VAL_NUMBER;
-                right.number = 0;
-                right.string = NULL;
-                right.object = NULL;
-            }
-
-            /* string concat on + */
-            if (node->binop.op && strcmp(node->binop.op, "+") == 0 &&
-                (left.type == VAL_STRING || right.type == VAL_STRING)) {
-
-                char lb[64], rb[64];
-                const char *ls = (left.type == VAL_STRING) ? left.string : (snprintf(lb, sizeof(lb), "%g", left.number), lb);
-                const char *rs = (right.type == VAL_STRING) ? right.string : (snprintf(rb, sizeof(rb), "%g", right.number), rb);
-
-                char *out = (char*)malloc(strlen(ls) + strlen(rs) + 1);
-                if (!out) error(0, "Splice/SystemError OOM concat");
-                strcpy(out, ls);
-                strcat(out, rs);
-
-                if (left.type == VAL_STRING) free(left.string);
-                if (right.type == VAL_STRING) free(right.string);
-
-                Value tmp;
-                tmp.type = VAL_STRING;
-                tmp.string = out;
-                return tmp;
-            }
-
-            double lnum = (left.type == VAL_NUMBER) ? left.number : strtod(left.string ? left.string : "0", NULL);
-            double rnum = (right.type == VAL_NUMBER) ? right.number : strtod(right.string ? right.string : "0", NULL);
-
-            double result = 0;
-            const char *op = node->binop.op ? node->binop.op : "";
-
-            if (strcmp(op, "==") == 0) {
-                if (left.type == VAL_STRING || right.type == VAL_STRING) {
-                    const char *ls = (left.type == VAL_STRING) ? left.string : "";
-                    const char *rs = (right.type == VAL_STRING) ? right.string : "";
-                    result = (strcmp(ls, rs) == 0);
-                } else {
-                    result = (lnum == rnum);
-                }
-            }
-            else if (strcmp(op, "!=") == 0) {
-                if (left.type == VAL_STRING || right.type == VAL_STRING) {
-                    const char *ls = (left.type == VAL_STRING) ? left.string : "";
-                    const char *rs = (right.type == VAL_STRING) ? right.string : "";
-                    result = (strcmp(ls, rs) != 0);
-                } else {
-                    result = (lnum != rnum);
-                }
-            }
-            else if (strcmp(op, "+") == 0) result = lnum + rnum;
-            else if (strcmp(op, "-") == 0) result = lnum - rnum;
-            else if (strcmp(op, "*") == 0) result = lnum * rnum;
-            else if (strcmp(op, "/") == 0) result = lnum / rnum;
-            else if (strcmp(op, "<") == 0) result = (lnum < rnum);
-            else if (strcmp(op, ">") == 0) result = (lnum > rnum);
-            else if (strcmp(op, "<=") == 0) result = (lnum <= rnum);
-            else if (strcmp(op, ">=") == 0) result = (lnum >= rnum);
-            else if (strcmp(op, "&&") == 0) result = ((lnum != 0) && (rnum != 0));
-            else if (strcmp(op, "||") == 0) result = ((lnum != 0) || (rnum != 0));
-            else if (strcmp(op, "!") == 0) result = (lnum == 0);
-
-            if (left.type == VAL_STRING) free(left.string);
-            if (right.type == VAL_STRING) free(right.string);
-
-            Value tmp;
-            tmp.type = VAL_NUMBER;
-            tmp.number = result;
-            return tmp;
-        }
-
-        case AST_FUNCTION_CALL: {
-            /* builtins */
-            if (strcmp(node->funccall.funcname, "len") == 0 && node->funccall.arg_count == 1) {
-                Value a = eval(node->funccall.args[0]);
-                if (a.type != VAL_OBJECT) {
-                    Value tmp;
-                    tmp.type = VAL_NUMBER;
-                    tmp.number = 0;
-                    return tmp;
-                }
-                ObjArray *oa = (ObjArray*)a.object;
-                if (!oa || oa->type != OBJ_ARRAY) {
-                    Value tmp;
-                    tmp.type = VAL_NUMBER;
-                    tmp.number = 0;
-                    return tmp;
-                }
-                Value tmp;
-                tmp.type = VAL_NUMBER;
-                tmp.number = (double)oa->count;
-                return tmp;
-            }
-
-            if (strcmp(node->funccall.funcname, "append") == 0 && node->funccall.arg_count == 2) {
-                Value a = eval(node->funccall.args[0]);
-                Value v = eval(node->funccall.args[1]);
-                if (a.type != VAL_OBJECT) error(0, "Splice/ArrayError append: first arg must be array");
-                ObjArray *oa = (ObjArray*)a.object;
-                if (!oa) error(0, "Splice/ArrayError append: invalid object");
-                if (oa->type == OBJ_TUPLE)
-                    error(0, "Splice/ArrayError append: cannot modify tuple (immutable)");
-                if (oa->type != OBJ_ARRAY)
-                    error(0, "Splice/ArrayError append: not an array");
-
-                if (oa->count >= oa->capacity) {
-                    int newcap = oa->capacity ? oa->capacity * 2 : 4;
-                    Value *ni = (Value*)realloc(oa->items, sizeof(Value) * (size_t)newcap);
-                    if (!ni) error(0, "Splice/SystemError OOM append realloc");
-                    oa->items = ni;
-                    oa->capacity = newcap;
-                }
-                oa->items[oa->count++] = v;
-                Value tmp;
-                tmp.type = VAL_NUMBER;
-                tmp.number = 1;
-                return tmp;
-            }
-
-            /* native */
-            SpliceCFunc native = Splice_get_native(node->funccall.funcname);
-            if (native) {
-                Value *args = (Value*)malloc(sizeof(Value) * (size_t)node->funccall.arg_count);
-                if (!args) error(0, "Splice/SystemError OOM native args");
-                for (int j = 0; j < node->funccall.arg_count; ++j) args[j] = eval(node->funccall.args[j]);
-                Value r = native(node->funccall.arg_count, args);
-                for (int j = 0; j < node->funccall.arg_count; ++j)
-                    if (args[j].type == VAL_STRING) free(args[j].string);
-                free(args);
-                return r;
-            }
-
-            /* user-defined */
-            ASTNode *func = get_func(node->funccall.funcname);
-            if (!func) error(0, "Splice/SyntaxError Undefined function: %s", node->funccall.funcname);
-
-            for (int j = 0; j < func->funcdef.param_count; ++j) {
-                Value av;
-                if (j < node->funccall.arg_count) {
-                    av = eval(node->funccall.args[j]);
-                } else {
-                    av.type = VAL_NUMBER;
-                    av.number = 0;
-                    av.string = NULL;
-                    av.object = NULL;
-                }
-
-                if (av.type == VAL_STRING) {
-
-
-
-                    set_var(func->funcdef.params[j], VAR_STRING, 0, av.string);
-                    free(av.string);
-                } else if (av.type == VAL_OBJECT) {
-                    set_var_object(func->funcdef.params[j], av.object);
-                } else {
-
-
-                    set_var(func->funcdef.params[j], VAR_NUMBER, av.number, NULL);
-                }
-            }
-
-            Value result;
-            result.type = VAL_NUMBER;
-            result.number = 0;
-            if (setjmp(return_buf) == 0) {
-                interpret(func->funcdef.body);
-            } else {
-                result = return_value;
-            }
-
-            return result;
-        }
-
-        default: {
-            Value tmp;
-            tmp.type = VAL_NUMBER;
-            tmp.number = 0;
-            return tmp;
-        }
-    }
-}
-
-static inline void sb_ensure(char **buf, size_t *cap, size_t need) {
-    if (need <= *cap) return;
-    while (*cap < need) *cap *= 2;
-    *buf = (char*)realloc(*buf, *cap);
-    if (!*buf) error(0, "Splice/SystemError OOM stringify");
-}
-
-static inline char *value_item_to_tmp(Value v, char tmp[128]) {
-    if (v.type == VAL_STRING) {
-        /* quoted strings */
-        snprintf(tmp, 128, "\"%s\"", v.string ? v.string : "");
-        return tmp;
-    }
-    if (v.type == VAL_NUMBER) {
-        snprintf(tmp, 128, "%g", v.number);
-        return tmp;
-    }
-    return "<object>";
-}
-
-static inline char *eval_to_string(ASTNode *node) {
-    Value v = eval(node);
-
-    if (v.type == VAL_STRING) {
-        /* caller owns it */
-        return v.string;
-    }
-
-    if (v.type == VAL_OBJECT) {
-        ObjArray *oa = (ObjArray*)v.object;
-        if (!oa) return strdup("<null>");
-
-        if (oa->type == OBJ_ARRAY || oa->type == OBJ_TUPLE) {
-            /* build string */
-            size_t cap = 128;
-            size_t len = 0;
-            char *out = (char*)malloc(cap);
-            if (!out) error(0, "Splice/SystemError OOM stringify");
-
-            char open = (oa->type == OBJ_TUPLE) ? '(' : '[';
-            char close = (oa->type == OBJ_TUPLE) ? ')' : ']';
-
-            out[len++] = open;
-
-            for (int i = 0; i < oa->count; i++) {
-                char tmp[128];
-                const char *s = value_item_to_tmp(oa->items[i], tmp);
-
-                size_t sl = strlen(s);
-                sb_ensure(&out, &cap, len + sl + 4);
-                memcpy(out + len, s, sl);
-                len += sl;
-
-                if (i + 1 < oa->count) {
-                    out[len++] = ',';
-                    out[len++] = ' ';
-                }
-            }
-
-            out[len++] = close;
-            out[len] = 0;
-            return out;
-        }
-
-        return strdup("<object>");
-    }
-
-    /* number */
-    char buf[64];
-    snprintf(buf, sizeof(buf), "%g", v.number);
-    return strdup(buf);
-}
-
-
-
-static inline void interpret(ASTNode *node);
-
-static inline void interpret(ASTNode *node) {
-    if (!node) return;
-
-    switch (node->type) {
-        case AST_STATEMENTS: {
-            for (int j = 0; j < node->statements.count; ++j) {
-                ASTNode *s = node->statements.stmts[j];
-                if (s && s->type == AST_FUNC_DEF)
-                    add_func(s->funcdef.funcname, s);
-
-
-            }
-            for (int j = 0; j < node->statements.count; ++j) {
-                ASTNode *s = node->statements.stmts[j];
-                if (!s || s->type == AST_FUNC_DEF) continue;
-                interpret(s);
-            }
-            break;
-        }
-        case AST_CONTINUE:
-            longjmp(*continue_buf, 1);
-            break;
-
-        case AST_BREAK:
-            if (!break_buf)
-                error(0, "Splice/SyntaxError 'break' outside loop");
-            longjmp(*break_buf, 1);
-            break;
-
-        case AST_IMPORT: {
-            #if !SPLICE_EMBED
-                const char *path = node->importstmt.filename;
-
-                if (already_imported(path)) {
-                    break; // already loaded
-                }
-
-                ASTNode *mod = read_ast_from_spc(path);
-                if (!mod) error(0, "Splice/ImportError import failed: %s", path);
-
-                imported_files[imported_count++] = strdup(path);
-
-                interpret(mod);   // executes + registers funcs
-                free_ast(mod);
-            #else
-                error(0, "Splice/ImportError import not supported on embedded builds");
-            #endif
-                break;
-        }
-
-        case AST_PRINT: {
-            Value v = eval(node->print.expr);
-            print_value(v);
-            if (v.type == VAL_STRING) free(v.string);
-
-        }
-        
-
-        case AST_FUNC_DEF:
-            add_func(node->funcdef.funcname, clone_ast(node));
-
-            break;
-
-        case AST_RETURN:
-            return_value = eval(node->retstmt.expr);
-            longjmp(return_buf, 1);
-            break;
-
-        case AST_LET:
-        case AST_ASSIGN: {
-            Value val = eval(node->var.value);
-            if (val.type == VAL_STRING) {
-
-
-                set_var(node->var.varname, VAR_STRING, 0, val.string);
-                free(val.string);
-            } else if (val.type == VAL_OBJECT) {
-                set_var_object(node->var.varname, val.object);
-            } else {
-
-
-                set_var(node->var.varname, VAR_NUMBER, val.number, NULL);
-            }
-            break;
-        }
-
-        case AST_IF:
-            if (eval(node->ifstmt.condition).number)
-                interpret(node->ifstmt.then_branch);
-            else
-                interpret(node->ifstmt.else_branch);
-            break;
-        case AST_WRITE: {
-            Value path = eval(node->write.path);
-            Value val  = eval(node->write.value);
-
-            if (path.type != VAL_STRING) {
-                error(0, "Splice/IOError write(): path must be string");
-            }
-
-            char *out;
-            if (val.type == VAL_STRING) {
-                out = val.string;
-            } else {
-                char buf[64];
-                snprintf(buf, sizeof(buf), "%g", val.number);
-                out = strdup(buf);
-            }
-
-#ifndef SPLICE_EMBED
-            FILE *f = fopen(path.string, "wb");
-            if (!f) {
-                free(path.string);
-                if (val.type == VAL_STRING) free(val.string);
-                error(0, "Splice/IOError write(): cannot open file");
-            }
-
-            fwrite(out, 1, strlen(out), f);
-            fclose(f);
-#endif
-
-            free(path.string);
-            if (val.type == VAL_STRING) free(val.string);
-            else free(out);
-
-            break;
-        }
-
-        case AST_WHILE: {
-            jmp_buf jb, jc;
-
-            jmp_buf *prev_break = break_buf;
-            jmp_buf *prev_cont  = continue_buf;
-
-            break_buf    = &jb;
-            continue_buf = &jc;
-
-            if (setjmp(jb) == 0) {
-                while (eval(node->whilestmt.cond).number) {
-                    if (setjmp(jc) == 0) {
-                        interpret(node->whilestmt.body);
-                    }
-                    // continue lands here
-                }
-            }
-
-            // restore outer loop context
-            break_buf    = prev_break;
-            continue_buf = prev_cont;
-
-            break;
-        }
-
-
-
-        case AST_FOR: {
-        if (!node->forstmt.for_var) {
-            error(0, "Splice/NULLError for-loop variable name is NULL");
-        }
-
-        int start = (int)eval(node->forstmt.for_start).number;
-        int end   = (int)eval(node->forstmt.for_end).number;
-
-        jmp_buf jb, jc;
-
-        jmp_buf *prev_break = break_buf;
-        jmp_buf *prev_cont  = continue_buf;
-
-        break_buf    = &jb;
-        continue_buf = &jc;
-
-        if (setjmp(jb) == 0) {
-            for (int k = start; k <= end; ++k) {
-
-                set_var(node->forstmt.for_var, VAR_NUMBER, k, NULL);
-
-                if (setjmp(jc) == 0) {
-                    interpret(node->forstmt.for_body);
-                }
-                // continue jumps land here
-            }
-        }
-
-        // restore outer context
-        break_buf    = prev_break;
-        continue_buf = prev_cont;
-
-
-        
-
-        break;
-    }
-
-
-        case AST_FUNCTION_CALL:
-        case AST_ARRAY_LITERAL:
-        case AST_INDEX_EXPR:
-        case AST_INDEX_ASSIGN:
-            (void)eval(node);
-            break;
-
-        case AST_RAISE: {
-            char *msg = eval_to_string(node->raise.expr);
-            error(0, "%s", msg);
-            break;
-        }
-
-
-        case AST_WARN: {
-            char *msg = eval_to_string(node->warn.expr);
-            warn(0, "%s", msg);
-            free(msg);
-            break;
-        }
-        case AST_INFO: {
-            char *msg = eval_to_string(node->info.expr);
-            info(0, "%s", msg);
-            free(msg);
-            break;
-        }
-
-        default:
-            break;
-    }
-}
 typedef struct {
     const unsigned char *data;
     size_t size;
     size_t pos;
-} SpcMemReader;
+} Reader;
 
-static inline unsigned char m_u8(SpcMemReader *r) {
-    if (r->pos >= r->size) error(0, "Splice/IOError Unexpected EOF (mem u8)");
+static unsigned char rd_u8(Reader *r) {
+    if (r->pos >= r->size) SPLICE_FAIL("SPC_EOF");
     return r->data[r->pos++];
 }
 
-static inline unsigned short m_u16(SpcMemReader *r) {
-    if (r->pos + 2 > r->size) error(0, "Splice/IOError Unexpected EOF (mem u16)");
-    unsigned short v;
-    memcpy(&v, r->data + r->pos, 2);
-    r->pos += 2;
+static uint32_t rd_u32(Reader *r) {
+    uint32_t v = 0;
+    v |= rd_u8(r);
+    v |= rd_u8(r) << 8;
+    v |= rd_u8(r) << 16;
+    v |= rd_u8(r) << 24;
     return v;
 }
 
-static inline unsigned int m_u32(SpcMemReader *r) {
-    if (r->pos + 4 > r->size) error(0, "Splice/IOError Unexpected EOF (mem u32)");
-    unsigned int v;
-    memcpy(&v, r->data + r->pos, 4);
-    r->pos += 4;
-    return v;
-}
-
-static inline double m_double(SpcMemReader *r) {
-    if (r->pos + sizeof(double) > r->size)
-        error(0, "Splice/IOError Unexpected EOF (mem double)");
-    double d;
-    memcpy(&d, r->data + r->pos, sizeof(double));
-    r->pos += sizeof(double);
-    return d;
-}
-
-static inline char *m_str(SpcMemReader *r) {
-    unsigned short len = m_u16(r);
-    if (r->pos + len > r->size) error(0, "Splice/IOError Unexpected EOF (mem string)");
-    char *s = (char*)malloc(len + 1);
+static const char *rd_str(Reader *r) {
+    uint32_t len = rd_u32(r);
+    if (len > r->size - r->pos) SPLICE_FAIL("SPC_STR");
+    if (len > SPLICE_MAX_STRING_LEN) SPLICE_FAIL("SPC_STR_LEN");
+    char *s = (char *)arena_alloc((size_t)len + 1);
     memcpy(s, r->data + r->pos, len);
-    r->pos += len;
     s[len] = 0;
+    r->pos += len;
     return s;
 }
-static ASTNode *read_ast_node_mem(SpcMemReader *r) {
-    unsigned char tag = m_u8(r);
 
-    ASTNodeType type = (ASTNodeType)tag;
-    ASTNode *n = ast_new(type);
+static ASTNode *read_node(Reader *r);
 
+static ASTNode *read_node(Reader *r) {
+    ASTNode *n = (ASTNode *)arena_alloc(sizeof(ASTNode));
+    n->type = (ASTNodeType)rd_u8(r);
 
     switch (n->type) {
-        case AST_NUMBER:
-            n->number = m_double(r);
+        case AST_NUMBER: {
+            double tmp;
+            memcpy(&tmp, r->data + r->pos, 8);
+            r->pos += 8;
+            n->number = tmp;
             break;
-
+        }
         case AST_STRING:
         case AST_IDENTIFIER:
-            n->string = m_str(r);
+            n->string = rd_str(r);
             break;
-
-        case AST_BINARY_OP:
-            n->binop.op = m_str(r);
-            n->binop.left  = read_ast_node_mem(r);
-            n->binop.right = read_ast_node_mem(r);
-            break;
-
         case AST_PRINT:
-            n->print.expr = read_ast_node_mem(r);
+            n->print.expr = read_node(r);
             break;
+        case AST_LET:
+        case AST_ASSIGN:
+            n->var.name = rd_str(r);
+            n->var.value = read_node(r);
+            break;
+        case AST_BINARY_OP:
+            n->binop.op = rd_str(r);
+            n->binop.left = read_node(r);
+            n->binop.right = read_node(r);
+            break;
+        case AST_STATEMENTS: {
+            int c = (int)rd_u32(r);
+            n->statements.count = c;
+            n->statements.stmts = (ASTNode **)arena_alloc(sizeof(ASTNode *) * c);
+            for (int i = 0; i < c; i++) n->statements.stmts[i] = read_node(r);
+            break;
+        }
+        case AST_FUNC_DEF:
+            n->funcdef.name = rd_str(r);
+            n->funcdef.body = read_node(r);
+            break;
+        case AST_FUNCTION_CALL:
+            n->funccall.name = rd_str(r);
+            break;
+        case AST_RETURN:
+            n->retstmt.expr = read_node(r);
+            break;
+        case AST_WHILE:
+            n->whilestmt.cond = read_node(r);
+            n->whilestmt.body = read_node(r);
+            break;
+        case AST_IF:
+            n->ifstmt.cond = read_node(r);
+            n->ifstmt.then_b = read_node(r);
+            n->ifstmt.else_b = read_node(r);
+            break;
+        case AST_FOR:
+            n->forstmt.var = rd_str(r);
+            n->forstmt.start = read_node(r);
+            n->forstmt.end = read_node(r);
+            n->forstmt.body = read_node(r);
+            break;
+        default:
+            break;
+    }
+    return n;
+}
+
+static ASTNode *read_ast_from_spc_mem(const unsigned char *data, size_t size) {
+    if (size < 5) SPLICE_FAIL("SPC_SHORT");
+    if (memcmp(data, SPC_MAGIC, 4) != 0) SPLICE_FAIL("SPC_MAGIC");
+    if (data[4] != SPC_VERSION) SPLICE_FAIL("SPC_VERSION");
+    Reader r = { data, size, 5 };
+    return read_node(&r);
+}
+
+/* ================= EVAL ================= */
+
+static Value eval(ASTNode *n) {
+    switch (n->type) {
+        case AST_NUMBER: return (Value){ VAL_NUMBER, n->number, NULL, NULL };
+        case AST_STRING: return (Value){ VAL_STRING, 0, n->string, NULL };
+        case AST_IDENTIFIER: {
+            VarSlot *v = get_var(n->string);
+            return v ? v->value : (Value){ VAL_NUMBER, 0, NULL, NULL };
+        }
+        case AST_BINARY_OP: {
+            Value a = eval(n->binop.left);
+            Value b = eval(n->binop.right);
+            if (!strcmp(n->binop.op, "+")) {
+                if (a.type == VAL_STRING && b.type == VAL_STRING) {
+                    size_t la = strlen(a.string);
+                    size_t lb = strlen(b.string);
+                    char *s = arena_alloc(la + lb + 1);
+                    memcpy(s, a.string, la);
+                    memcpy(s + la, b.string, lb);
+                    s[la + lb] = 0;
+                    return (Value){ VAL_STRING, 0, s, NULL };
+                }
+                // fallback numeric +
+                return (Value){ VAL_NUMBER, a.number + b.number, NULL, NULL };
+            }
+            
+            if (!strcmp(n->binop.op, "+")) return (Value){ VAL_NUMBER, a.number + b.number, NULL, NULL };
+            if (!strcmp(n->binop.op, "-")) return (Value){ VAL_NUMBER, a.number - b.number, NULL, NULL };
+            if (!strcmp(n->binop.op, "*")) return (Value){ VAL_NUMBER, a.number * b.number, NULL, NULL };
+            if (!strcmp(n->binop.op, "/")) return (Value){ VAL_NUMBER, a.number / b.number, NULL, NULL };
+            return (Value){ VAL_NUMBER, 0, NULL, NULL };
+        }
+        default:
+            return (Value){ VAL_NUMBER, 0, NULL, NULL };
+    }
+}
+static void splice_print_value(Value v) {
+    char buf[32];
+
+    switch (v.type) {
+
+    case VAL_STRING:
+        if (v.string) {
+            SPLICE_PRINTLN(v.string);
+        } else {
+            SPLICE_PRINTLN("(null)");
+        }
+        break;
+
+    case VAL_NUMBER:
+        // portable, works everywhere
+        snprintf(buf, sizeof(buf), "%g", v.number);
+        SPLICE_PRINTLN(buf);
+        break;
+
+    case VAL_OBJECT:
+        // placeholder until objects exist
+        SPLICE_PRINTLN("<object>");
+        break;
+
+    default:
+        SPLICE_PRINTLN("<unknown>");
+        break;
+    }
+}
+
+
+/* ================= INTERPRET ================= */
+
+static ExecResult interpret(ASTNode *n) {
+    switch (n->type) {
+
+        case AST_STATEMENTS:
+            for (int i = 0; i < n->statements.count; i++) {
+                ExecResult r = interpret(n->statements.stmts[i]);
+                if (r != EXEC_OK) return r;
+            }
+            return EXEC_OK;
+
+        case AST_PRINT: {
+            Value v = eval(n->print.expr);
+            splice_print_value(v);
+            return EXEC_OK;
+        }
+            
 
         case AST_LET:
         case AST_ASSIGN:
-            n->var.varname = m_str(r);
-            n->var.value   = read_ast_node_mem(r);
-            break;
+            set_var(n->var.name, eval(n->var.value));
+            return EXEC_OK;
 
-        case AST_STATEMENTS: {
-            unsigned int c = m_u32(r);
-            n->statements.count = (int)c;
-            n->statements.stmts = (ASTNode**)calloc(c ? c : 1, sizeof(ASTNode*));
-            for (unsigned int i = 0; i < c; i++)
-                n->statements.stmts[i] = read_ast_node_mem(r);
-            break;
+        case AST_IF:
+            return eval(n->ifstmt.cond).number
+                ? interpret(n->ifstmt.then_b)
+                : interpret(n->ifstmt.else_b);
+
+        case AST_WHILE:
+            while (eval(n->whilestmt.cond).number) {
+                ExecResult r = interpret(n->whilestmt.body);
+                if (r == EXEC_BREAK) break;
+                if (r == EXEC_CONTINUE) continue;
+                if (r != EXEC_OK) return r;
+            }
+            return EXEC_OK;
+
+        case AST_FOR: {
+            int s = (int)eval(n->forstmt.start).number;
+            int e = (int)eval(n->forstmt.end).number;
+            for (int i = s; i <= e; i++) {
+                set_var(n->forstmt.var, (Value){ VAL_NUMBER, i, NULL, NULL });
+                ExecResult r = interpret(n->forstmt.body);
+                if (r == EXEC_BREAK) break;
+                if (r == EXEC_CONTINUE) continue;
+                if (r != EXEC_OK) return r;
+            }
+            return EXEC_OK;
         }
 
+        case AST_BREAK: return EXEC_BREAK;
+        case AST_CONTINUE: return EXEC_CONTINUE;
+
+        case AST_RETURN:
+            splice_return_value = eval(n->retstmt.expr);
+            return EXEC_RETURN;
+
+        case AST_FUNC_DEF:
+            add_func(n->funcdef.name, n->funcdef.body);
+            return EXEC_OK;
+
         case AST_FUNCTION_CALL: {
-            n->funccall.funcname = m_str(r);
-            unsigned int ac = m_u32(r);
-            n->funccall.arg_count = (int)ac;
-            n->funccall.args = (ASTNode**)calloc(ac ? ac : 1, sizeof(ASTNode*));
-            for (unsigned int i = 0; i < ac; i++)
-                n->funccall.args[i] = read_ast_node_mem(r);
-            break;
+            ASTNode *body = get_func(n->funccall.name);
+            if (!body) SPLICE_FAIL("UNDEF_FUNC");
+            ExecResult r = interpret(body);
+            if (r == EXEC_RETURN) return EXEC_OK;
+            return r;
         }
 
         default:
-            error(0, "Splice/IOError Unsupported AST type in mem reader: %d", n->type);
+            eval(n);
+            return EXEC_OK;
     }
-
-    return n;
-}
-static inline ASTNode *read_ast_from_spc_mem(
-    const unsigned char *data,
-    size_t size
-) {
-    if (size < 5) error(0, "Splice/SPCrror Invalid SPC (too small)");
-    if (memcmp(data, SPC_MAGIC, 4) != 0)
-        error(0, "Splice/SPCrror Invalid SPC magic");
-
-    if (data[4] != SPC_VERSION)
-        error(0, "Splice/SPCrror Unsupported SPC version");
-
-    SpcMemReader r;
-    r.data = data;
-    r.size = size;
-    r.pos  = 5;
-
-    return read_ast_node_mem(&r);
 }
 
+/* ================= RESET ================= */
 
-#endif /* Splice_H */
+static void splice_reset_vm(void) {
+    memset(var_table, 0, sizeof(var_table));
+    memset(func_table, 0, sizeof(func_table));
+    splice_return_value = (Value){ VAL_NUMBER, 0, NULL, NULL };
+}
+
+#endif
