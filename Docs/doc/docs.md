@@ -215,7 +215,9 @@ This design allows:
 
 ---
 
-## Embedding Splice in C
+## SpliceCSDK
+
+### Embedding Splice in C
 
 Splice is designed to be embedded in C applications.
 
@@ -261,9 +263,38 @@ void loop() {}
 
 ```
 
+### Splice functions
+
+Splice has functions that let you configure the VM. These Function are great to configure the VM for specfic tasks.
+
+#### ``splice_set_call_depth``
+
+This function is designed to set a recursion max depth. This is great for limiting how many times a function can recurse. Below is an example of showing this happening.
+
+``` C
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include "splice.h"
+// This code will tell splice that after 100 recursions to stop.
+splice_set_call_depth(100);
+ASTNode *root = read_ast_from_spc(arg);
+interpret(root);
+free_ast(root);
+```
+
+#### ``splice_disable_tick_limit``
+This function is designed to disable Splice's default **Tick Limit** (Currently set to ``1000000``)
+This function works cleanly with the [``splice_set_tick``](#splice_set_tick)
+
+#### ``splice_set_tick``
+
+
+> This function **will only** work when ``splice_disable_tick_limit`` is in the script
+
+This function is desinged to set how many instructions will run before exiting
+
 ---
-
-
 
 © Copyright 2026 OpenSplice and the Sinha Group
 Licensed under the MIT License

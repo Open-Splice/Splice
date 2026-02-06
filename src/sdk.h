@@ -10,11 +10,12 @@
   #define SPLICE_EMBED 0
 #endif
 
+
 /* ============================================================
    Value forward declaration (from Splice.h)
    ============================================================ */
 struct Value;
-typedef struct Value Value;
+
 
 /* ============================================================
    Native function pointer type

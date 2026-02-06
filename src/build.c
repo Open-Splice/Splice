@@ -1,103 +1,245 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 #include <ctype.h>
 
-#include "splice.h"
-  /* uses AST types + write_ast_to_spc */
-ASTNode* ast_tuple(ASTNode** items, int count) {
-    ASTNode* node = malloc(sizeof(ASTNode));
-    node->type = AST_TUPLE;
-    node->tuple.items = items;
-    node->tuple.count = count;
-    return node;
+/* =========================================================
+   This builder emits SPC compatible with the simplified VM
+   header you posted:
+     - u8 node type
+     - strings: u32 len + bytes
+     - numbers: 8 bytes raw (double)
+     - STATEMENTS: u32 count + nodes
+     - LET/ASSIGN: str name + node
+     - BINARY_OP: str op + left + right
+     - PRINT: node
+     - WHILE: cond + body
+     - IF: cond + then + else (else can be NULL node)
+     - FOR: var + start + end + body
+     - FUNC_DEF: name + body
+     - FUNCTION_CALL: name
+     - RETURN: expr (can be NULL node)
+     - BREAK/CONTINUE: no payload
+   ========================================================= */
+
+/* ===== SPC header ===== */
+#define SPC_MAGIC "SPC\0"
+#define SPC_VERSION 1
+
+/* ===== AST types (MUST MATCH YOUR VM) ===== */
+typedef enum {
+    AST_NUMBER = 0,
+    AST_STRING,
+    AST_IDENTIFIER,
+    AST_BINARY_OP,
+    AST_LET,
+    AST_ASSIGN,
+    AST_BREAK,
+    AST_PRINT,
+    AST_CONTINUE,
+    AST_WHILE,
+    AST_IF,
+    AST_STATEMENTS,
+    AST_FUNC_DEF,
+    AST_FUNCTION_CALL,
+    AST_RETURN,
+    AST_FOR
+} ASTNodeType;
+
+typedef struct ASTNode ASTNode;
+
+struct ASTNode {
+    ASTNodeType type;
+    union {
+        double number;
+        char *string;
+
+        struct { char *op; ASTNode *left; ASTNode *right; } binop;
+        struct { char *name; ASTNode *value; } var;
+        struct { ASTNode *expr; } print;
+        struct { ASTNode *cond; ASTNode *body; } whilestmt;
+        struct { ASTNode *cond; ASTNode *then_b; ASTNode *else_b; } ifstmt;
+        struct { ASTNode **stmts; int count; } statements;
+        struct { char *name; ASTNode *body; } funcdef;
+        struct { char *name; } funccall;
+        struct { ASTNode *expr; } retstmt;
+        struct { char *var; ASTNode *start; ASTNode *end; ASTNode *body; } forstmt;
+    };
+};
+
+/* ===== utils ===== */
+static void die(const char *msg) { fprintf(stderr, "%s\n", msg); exit(1); }
+
+static void *xmalloc(size_t n) {
+    void *p = malloc(n);
+    if (!p) die("spbuild: OOM");
+    return p;
+}
+static void *xrealloc(void *p, size_t n) {
+    void *q = realloc(p, n);
+    if (!q) die("spbuild: OOM");
+    return q;
+}
+static char *xstrdup(const char *s) {
+    if (!s) s = "";
+    size_t n = strlen(s);
+    char *p = (char*)xmalloc(n + 1);
+    memcpy(p, s, n + 1);
+    return p;
 }
 
-static inline int write_ast_to_spc(const char *out_file, const ASTNode *root) {
-    FILE *f = fopen(out_file, "wb");
-    if (!f) return 0;
-
-    fwrite(SPC_MAGIC, 1, 4, f);
-    w_u8(f, (unsigned char)SPC_VERSION);
-
-    write_ast_node(f, root);
-    fclose(f);
-    return 1;
+/* ===== AST constructors ===== */
+static ASTNode *ast_new(ASTNodeType t) {
+    ASTNode *n = (ASTNode*)xmalloc(sizeof(ASTNode));
+    memset(n, 0, sizeof(*n));
+    n->type = t;
+    return n;
 }
-static const char *resolve_builtin_import(const char *name) {
-#ifdef _WIN32
-    const char *prefix = "C:\\Program Files\\Splice\\";
-#else
-    const char *prefix = "/usr/local/bin/";
-#endif
 
-    if (strcmp(name, "math") == 0) {
-        static char path[256];
-        snprintf(path, sizeof(path), "%ssplib/math.spc", prefix);
-        return path;
+static ASTNode *ast_number(double v) { ASTNode *n=ast_new(AST_NUMBER); n->number=v; return n; }
+static ASTNode *ast_string(const char *s) { ASTNode *n=ast_new(AST_STRING); n->string=xstrdup(s); return n; }
+static ASTNode *ast_ident(const char *s) { ASTNode *n=ast_new(AST_IDENTIFIER); n->string=xstrdup(s); return n; }
+
+static ASTNode *ast_binop(const char *op, ASTNode *l, ASTNode *r) {
+    ASTNode *n = ast_new(AST_BINARY_OP);
+    n->binop.op = xstrdup(op);
+    n->binop.left = l;
+    n->binop.right = r;
+    return n;
+}
+
+static ASTNode *ast_print(ASTNode *e) { ASTNode *n=ast_new(AST_PRINT); n->print.expr=e; return n; }
+
+static ASTNode *ast_var(ASTNodeType t, const char *name, ASTNode *val) {
+    ASTNode *n = ast_new(t);
+    n->var.name = xstrdup(name);
+    n->var.value = val;
+    return n;
+}
+
+static ASTNode *ast_statements(ASTNode **stmts, int count) {
+    ASTNode *n=ast_new(AST_STATEMENTS);
+    n->statements.stmts=stmts;
+    n->statements.count=count;
+    return n;
+}
+
+static ASTNode *ast_while(ASTNode *c, ASTNode *b) {
+    ASTNode *n=ast_new(AST_WHILE);
+    n->whilestmt.cond=c; n->whilestmt.body=b;
+    return n;
+}
+
+static ASTNode *ast_if(ASTNode *c, ASTNode *t, ASTNode *e) {
+    ASTNode *n=ast_new(AST_IF);
+    n->ifstmt.cond=c; n->ifstmt.then_b=t; n->ifstmt.else_b=e;
+    return n;
+}
+
+static ASTNode *ast_for(const char *v, ASTNode *s, ASTNode *e, ASTNode *b) {
+    ASTNode *n=ast_new(AST_FOR);
+    n->forstmt.var=xstrdup(v);
+    n->forstmt.start=s; n->forstmt.end=e; n->forstmt.body=b;
+    return n;
+}
+
+static ASTNode *ast_funcdef(const char *name, ASTNode *body) {
+    ASTNode *n=ast_new(AST_FUNC_DEF);
+    n->funcdef.name=xstrdup(name);
+    n->funcdef.body=body;
+    return n;
+}
+
+static ASTNode *ast_call0(const char *name) {
+    ASTNode *n=ast_new(AST_FUNCTION_CALL);
+    n->funccall.name=xstrdup(name);
+    return n;
+}
+
+static ASTNode *ast_return(ASTNode *e) { ASTNode *n=ast_new(AST_RETURN); n->retstmt.expr=e; return n; }
+
+/* ===== free AST (builder side) ===== */
+static void free_ast(ASTNode *n) {
+    if (!n) return;
+    switch (n->type) {
+        case AST_STRING:
+        case AST_IDENTIFIER:
+            free(n->string);
+            break;
+        case AST_BINARY_OP:
+            free(n->binop.op);
+            free_ast(n->binop.left);
+            free_ast(n->binop.right);
+            break;
+        case AST_PRINT:
+            free_ast(n->print.expr);
+            break;
+        case AST_LET:
+        case AST_ASSIGN:
+            free(n->var.name);
+            free_ast(n->var.value);
+            break;
+        case AST_STATEMENTS:
+            for (int i=0;i<n->statements.count;i++) free_ast(n->statements.stmts[i]);
+            free(n->statements.stmts);
+            break;
+        case AST_WHILE:
+            free_ast(n->whilestmt.cond);
+            free_ast(n->whilestmt.body);
+            break;
+        case AST_IF:
+            free_ast(n->ifstmt.cond);
+            free_ast(n->ifstmt.then_b);
+            free_ast(n->ifstmt.else_b);
+            break;
+        case AST_FOR:
+            free(n->forstmt.var);
+            free_ast(n->forstmt.start);
+            free_ast(n->forstmt.end);
+            free_ast(n->forstmt.body);
+            break;
+        case AST_FUNC_DEF:
+            free(n->funcdef.name);
+            free_ast(n->funcdef.body);
+            break;
+        case AST_FUNCTION_CALL:
+            free(n->funccall.name);
+            break;
+        case AST_RETURN:
+            free_ast(n->retstmt.expr);
+            break;
+        default:
+            break;
     }
-
-    if (strcmp(name, "io") == 0) {
-        static char path[256];
-        snprintf(path, sizeof(path), "%ssplib/io.spc", prefix);
-        return path;
-    }
-
-    return name; /* fallback: user-provided path */
+    free(n);
 }
 
+/* =========================================================
+   LEXER
+   ========================================================= */
 
-/* =========================
-   Read whole file
-   ========================= */
-static char *read_text_file(const char *path) {
-    FILE *f = fopen(path, "rb");
-    if (!f) return NULL;
-    fseek(f, 0, SEEK_END);
-    long n = ftell(f);
-    rewind(f);
-    char *buf = (char*)malloc((size_t)n + 1);
-    if (!buf) { fclose(f); return NULL; }
-    if (fread(buf, 1, (size_t)n, f) != (size_t)n) { fclose(f); free(buf); return NULL; }
-    buf[n] = 0;
-    fclose(f);
-    return buf;
-}
-
-/* =========================
-   Tokenizer
-   ========================= */
 typedef enum {
     TK_EOF=0,
-    TK_IDENT,
-    TK_NUMBER,
-    TK_STRING,
+    TK_IDENT, TK_NUMBER, TK_STRING,
 
-    TK_LET, TK_FUNC, TK_RETURN, TK_PRINT, TK_INPUT,
-    TK_READ, TK_WRITE,
-    TK_IF, TK_ELSE, TK_WHILE, TK_FOR, TK_IN,
-    TK_RAISE,
-    TK_TRUE, TK_FALSE,
-    TK_AND, TK_OR, TK_NOT,TK_DOTDOT,TK_BREAK,TK_CONTINUE,
+    TK_LET, TK_PRINT, TK_IF, TK_ELSE, TK_WHILE, TK_FOR, TK_IN,
+    TK_FUNC, TK_RETURN, TK_BREAK, TK_CONTINUE,
 
-
-
-    TK_LPAREN, TK_RPAREN,
-    TK_LBRACE, TK_RBRACE,
-    TK_LBRACKET, TK_RBRACKET,
+    TK_LPAREN, TK_RPAREN, TK_LBRACE, TK_RBRACE,
     TK_COMMA, TK_SEMI,
-    TK_DOT,TK_QUIT,
+    TK_ASSIGN,
 
-    TK_ASSIGN,      /* = */
-    TK_PLUS, TK_MINUS, TK_STAR, TK_SLASH, TK_IMPORT,
-
-    TK_LT, TK_GT, TK_LE, TK_GE, TK_EQ, TK_NEQ
+    TK_PLUS, TK_MINUS, TK_STAR, TK_SLASH, TK_MOD,
+    TK_LT, TK_GT, TK_LE, TK_GE, TK_EQ, TK_NEQ,
+    TK_AND, TK_OR, TK_NOT,
+    TK_DOTDOT
 } TokType;
 
 typedef struct {
     TokType t;
-    char *lex;      /* for IDENT/STRING */
-    double num;     /* for NUMBER */
+    char *lex;
+    double num;
     int line;
 } Tok;
 
@@ -107,106 +249,85 @@ typedef struct {
     int cap;
 } TokVec;
 
-static void tv_init(TokVec *v) { v->data=NULL; v->count=0; v->cap=0; }
-static void tv_push(TokVec *v, Tok x) {
+static void tv_push(TokVec *v, Tok t) {
     if (v->count >= v->cap) {
         v->cap = v->cap ? v->cap*2 : 256;
-        Tok *nd = (Tok*)realloc(v->data, sizeof(Tok) * (size_t)v->cap);
-        if (!nd) error(0, "Splice/SystemError oom realloc tokens");
-        v->data = nd;
+        v->data = (Tok*)xrealloc(v->data, sizeof(Tok)*(size_t)v->cap);
     }
-    v->data[v->count++] = x;
-}
-static void tv_free(TokVec *v) {
-    for (int i=0;i<v->count;i++) free(v->data[i].lex);
-    free(v->data);
+    v->data[v->count++] = t;
 }
 
-static int is_boundary(char c) { return !(isalnum((unsigned char)c) || c=='_'); }
+static TokType kw_type(const char *id) {
+    if (!strcmp(id,"let")) return TK_LET;
+    if (!strcmp(id,"print")) return TK_PRINT;
+    if (!strcmp(id,"if")) return TK_IF;
+    if (!strcmp(id,"else")) return TK_ELSE;
+    if (!strcmp(id,"while")) return TK_WHILE;
+    if (!strcmp(id,"for")) return TK_FOR;
+    if (!strcmp(id,"in")) return TK_IN;
+    if (!strcmp(id,"func")) return TK_FUNC;
+    if (!strcmp(id,"return")) return TK_RETURN;
+    if (!strcmp(id,"break")) return TK_BREAK;
+    if (!strcmp(id,"continue")) return TK_CONTINUE;
+    return TK_IDENT;
+}
 
-static void tokenize(const char *src, TokVec *out) {
+static void lex(const char *src, TokVec *out) {
     int line = 1;
     const char *p = src;
 
     while (*p) {
-        if (*p=='\n') { line++; p++; continue; }
+        if (*p == '\n') { line++; p++; tv_push(out,(Tok){.t=TK_SEMI,.line=line}); continue; }
         if (isspace((unsigned char)*p)) { p++; continue; }
 
-        /* comments // ... */
         if (p[0]=='/' && p[1]=='/') { while (*p && *p!='\n') p++; continue; }
 
-        /* string "..." */
         if (*p=='"') {
             p++;
             const char *s = p;
-            while (*p && *p!='"') p++;
+            while (*p && *p!='"') {
+                if (*p=='\\' && p[1]) p++; /* skip escaped char */
+                p++;
+            }
             size_t n = (size_t)(p - s);
-            char *str = (char*)malloc(n+1);
-            if (!str) error(line, "Splice/SystemErroroom string");
-            memcpy(str, s, n);
-            str[n]=0;
-            Tok t = { .t=TK_STRING, .lex=str, .line=line };
-            tv_push(out, t);
+            char *buf = (char*)xmalloc(n+1);
+            /* simple unescape for \" and \\ and \n */
+            size_t j=0;
+            for (size_t i=0;i<n;i++) {
+                char c = s[i];
+                if (c=='\\' && i+1<n) {
+                    char d = s[++i];
+                    if (d=='n') buf[j++]='\n';
+                    else buf[j++]=d;
+                } else buf[j++]=c;
+            }
+            buf[j]=0;
+            tv_push(out,(Tok){.t=TK_STRING,.lex=buf,.line=line});
             if (*p=='"') p++;
             continue;
         }
 
-        /* number */
-        if (isdigit((unsigned char)*p)) {
+        if (isdigit((unsigned char)*p) || (*p=='.' && isdigit((unsigned char)p[1]))) {
             const char *s = p;
             while (isdigit((unsigned char)*p)) p++;
-                if (*p=='.' && isdigit((unsigned char)p[1])) {
-                    p++;
-                    while (isdigit((unsigned char)*p)) p++;
-                }
-
+            if (*p=='.') { p++; while (isdigit((unsigned char)*p)) p++; }
             char tmp[128];
             size_t n = (size_t)(p - s);
-            if (n >= sizeof(tmp)) error(line, "Splice/OverflowError number too long");
-            memcpy(tmp, s, n);
-            tmp[n]=0;
-            Tok t = { .t=TK_NUMBER, .num=strtod(tmp,NULL), .line=line };
-            tv_push(out, t);
+            if (n >= sizeof(tmp)) die("number too long");
+            memcpy(tmp,s,n); tmp[n]=0;
+            tv_push(out,(Tok){.t=TK_NUMBER,.num=strtod(tmp,NULL),.line=line});
             continue;
         }
 
-        /* identifiers/keywords */
         if (isalpha((unsigned char)*p) || *p=='_') {
-            const char *s = p;
+            const char *s=p;
             while (isalnum((unsigned char)*p) || *p=='_') p++;
-            size_t n = (size_t)(p - s);
-            char *id = (char*)malloc(n+1);
-            if (!id) error(line, "Splice/SystemErroroom ident");
-            memcpy(id, s, n);
-            id[n]=0;
-
-            TokType kw = TK_IDENT;
-            if      (!strcmp(id,"let"))    kw=TK_LET;
-            else if (!strcmp(id,"func"))   kw=TK_FUNC;
-            else if (!strcmp(id,"return")) kw=TK_RETURN;
-            else if (!strcmp(id,"print"))  kw=TK_PRINT;
-            else if (!strcmp(id,"raise"))   kw=TK_RAISE;
-            else if (!strcmp(id,"if"))     kw=TK_IF;
-            else if (!strcmp(id,"else"))   kw=TK_ELSE;
-            else if (!strcmp(id,"while"))  kw=TK_WHILE;
-            else if (!strcmp(id,"for"))    kw=TK_FOR;
-            else if (!strcmp(id,"in"))     kw=TK_IN;
-            else if (!strcmp(id,"read"))   kw = TK_READ;
-            else if (!strcmp(id,"write"))  kw = TK_WRITE;
-            else if (!strcmp(id,"true"))   kw=TK_TRUE;
-            else if (!strcmp(id,"break")) kw = TK_BREAK;
-            else if (!strcmp(id, "continue")) kw = TK_CONTINUE;
-            else if (!strcmp(id,"false"))  kw=TK_FALSE;
-            else if (!strcmp(id,"and"))    kw=TK_AND;
-            else if (!strcmp(id,"or"))     kw=TK_OR;
-            else if (!strcmp(id,"not"))    kw=TK_NOT;
-            else if (!strcmp(id,"input"))  kw=TK_INPUT;
-            else if (!strcmp(id,"import")) kw=TK_IMPORT;
-            else if (!strcmp(id,"quit"))   kw=TK_QUIT;
-
-            Tok t = { .t=kw, .lex=(kw==TK_IDENT? id : NULL), .line=line };
-            if (kw!=TK_IDENT) free(id);
-            tv_push(out, t);
+            size_t n=(size_t)(p-s);
+            char *id=(char*)xmalloc(n+1);
+            memcpy(id,s,n); id[n]=0;
+            TokType t = kw_type(id);
+            if (t==TK_IDENT) tv_push(out,(Tok){.t=t,.lex=id,.line=line});
+            else { free(id); tv_push(out,(Tok){.t=t,.line=line}); }
             continue;
         }
 
@@ -215,539 +336,451 @@ static void tokenize(const char *src, TokVec *out) {
         if (p[0]=='!' && p[1]=='=') { tv_push(out,(Tok){.t=TK_NEQ,.line=line}); p+=2; continue; }
         if (p[0]=='<' && p[1]=='=') { tv_push(out,(Tok){.t=TK_LE,.line=line}); p+=2; continue; }
         if (p[0]=='>' && p[1]=='=') { tv_push(out,(Tok){.t=TK_GE,.line=line}); p+=2; continue; }
-        if (p[0]=='.' && p[1]=='.') {
-            tv_push(out, (Tok){ .t = TK_DOTDOT, .line = line });
-            p += 2;
-            continue;
-        }
-        /* single-char */
+        if (p[0]=='&' && p[1]=='&') { tv_push(out,(Tok){.t=TK_AND,.line=line}); p+=2; continue; }
+        if (p[0]=='|' && p[1]=='|') { tv_push(out,(Tok){.t=TK_OR,.line=line}); p+=2; continue; }
+        if (p[0]=='.' && p[1]=='.') { tv_push(out,(Tok){.t=TK_DOTDOT,.line=line}); p+=2; continue; }
+
+        /* single char */
         switch (*p) {
-            case '.': tv_push(out,(Tok){.t=TK_DOT,.line=line}); p++; break;
             case '(': tv_push(out,(Tok){.t=TK_LPAREN,.line=line}); p++; break;
             case ')': tv_push(out,(Tok){.t=TK_RPAREN,.line=line}); p++; break;
             case '{': tv_push(out,(Tok){.t=TK_LBRACE,.line=line}); p++; break;
             case '}': tv_push(out,(Tok){.t=TK_RBRACE,.line=line}); p++; break;
-            case '[': tv_push(out,(Tok){.t=TK_LBRACKET,.line=line}); p++; break;
-            case ']': tv_push(out,(Tok){.t=TK_RBRACKET,.line=line}); p++; break;
             case ',': tv_push(out,(Tok){.t=TK_COMMA,.line=line}); p++; break;
             case ';': tv_push(out,(Tok){.t=TK_SEMI,.line=line}); p++; break;
-            
-
-
-
-
-            
             case '=': tv_push(out,(Tok){.t=TK_ASSIGN,.line=line}); p++; break;
             case '+': tv_push(out,(Tok){.t=TK_PLUS,.line=line}); p++; break;
             case '-': tv_push(out,(Tok){.t=TK_MINUS,.line=line}); p++; break;
             case '*': tv_push(out,(Tok){.t=TK_STAR,.line=line}); p++; break;
             case '/': tv_push(out,(Tok){.t=TK_SLASH,.line=line}); p++; break;
-
+            case '%': tv_push(out,(Tok){.t=TK_MOD,.line=line}); p++; break;
             case '<': tv_push(out,(Tok){.t=TK_LT,.line=line}); p++; break;
             case '>': tv_push(out,(Tok){.t=TK_GT,.line=line}); p++; break;
-
+            case '!': tv_push(out,(Tok){.t=TK_NOT,.line=line}); p++; break;
             default:
-                error(line, "Splice/SyntaxError Unknown char: '%c'", *p);
+                fprintf(stderr,"lexer: unknown char '%c' at line %d\n", *p, line);
+                exit(1);
         }
     }
 
-    tv_push(out, (Tok){ .t=TK_EOF, .line=line });
+    tv_push(out,(Tok){.t=TK_EOF,.line=line});
 }
 
-/* =========================
-   Parser (recursive descent)
-   ========================= */
+static void tv_free(TokVec *v) {
+    for (int i=0;i<v->count;i++) free(v->data[i].lex);
+    free(v->data);
+}
+
+/* =========================================================
+   PARSER (recursive descent)
+   ========================================================= */
+
 static TokVec *G;
 static int P;
 
 static Tok *peek(void) { return &G->data[P]; }
-static Tok *prev(void) { return &G->data[P-1]; }
 static int at(TokType t) { return peek()->t == t; }
-static Tok *consume(TokType t, const char *msg) {
-    if (!at(t)) error(peek()->line, "%s", msg);
-    return &G->data[P++];
-}
+static Tok *advance(void) { return &G->data[P++]; }
 static int match(TokType t) { if (at(t)) { P++; return 1; } return 0; }
 
-static ASTNode *parse_expression(void);
-static ASTNode *parse_statement(void);
-static ASTNode *parse_statements_until(TokType end);
-
-static ASTNode *parse_primary(void) {
-    if (match(TK_NUMBER)) {
-        ASTNode *n = ast_new(AST_NUMBER);
-        n->number = prev()->num;
-        return n;
+static void expect(TokType t, const char *msg) {
+    if (!at(t)) {
+        fprintf(stderr,"parse error line %d: %s\n", peek()->line, msg);
+        exit(1);
     }
-    if (match(TK_STRING)) {
-        ASTNode *n = ast_new(AST_STRING);
-        n->string = strdup(prev()->lex ? prev()->lex : "");
-        return n;
-    }
-    if (match(TK_TRUE))  { ASTNode *n=ast_new(AST_NUMBER); n->number=1; return n; }
-    if (match(TK_FALSE)) { ASTNode *n=ast_new(AST_NUMBER); n->number=0; return n; }
-
-    if (match(TK_IDENT)) {
-        char *name = strdup(prev()->lex);
-
-        /* call: ident(...) */
-        if (match(TK_LPAREN)) {
-            ASTNode **args = NULL;
-            int ac=0, cap=0;
-
-            if (!at(TK_RPAREN)) {
-                for (;;) {
-                    ASTNode *e = parse_expression();
-                    if (ac>=cap) { cap = cap?cap*2:8; args=(ASTNode**)realloc(args,sizeof(ASTNode*)*(size_t)cap); }
-                    args[ac++] = e;
-                    if (!match(TK_COMMA)) break;
-                }
-            }
-            consume(TK_RPAREN, "Splice/SyntaxError Expected ')' after call args");
-
-            ASTNode *c = ast_new(AST_FUNCTION_CALL);
-            c->funccall.funcname = name;
-            c->funccall.args = args;
-            c->funccall.arg_count = ac;
-            return c;
-        }
-
-        /* ident[index] */
-        if (match(TK_LBRACKET)) {
-            ASTNode *idx = parse_expression();
-            consume(TK_RBRACKET, "Splice/SyntaxError Expected ']' after index");
-
-            ASTNode *id = ast_new(AST_IDENTIFIER);
-            id->string = name;
-
-            ASTNode *ix = ast_new(AST_INDEX_EXPR);
-            ix->indexexpr.target = id;
-            ix->indexexpr.index  = idx;
-            return ix;
-        }
-
-        ASTNode *id = ast_new(AST_IDENTIFIER);
-        id->string = name;
-        return id;
-    }
-
-    if (match(TK_LPAREN)) {
-        ASTNode *first = parse_expression();
-
-        /* tuple if comma appears */
-        if (match(TK_COMMA)) {
-            ASTNode **items = NULL;
-            int count = 0, cap = 0;
-
-            /* first element */
-            cap = 4;
-            items = (ASTNode**)malloc(sizeof(ASTNode*) * cap);
-            items[count++] = first;
-
-            do {
-                if (count >= cap) {
-                    cap *= 2;
-                    items = (ASTNode**)realloc(items, sizeof(ASTNode*) * cap);
-                }
-                items[count++] = parse_expression();
-            } while (match(TK_COMMA));
-
-            consume(TK_RPAREN, "Splice/SyntaxError Expected ')' after tuple");
-
-            ASTNode *t = ast_new(AST_TUPLE);
-            t->tuple.items = items;
-            t->tuple.count = count;
-            return t;
-        }
-
-        /* otherwise normal grouping */
-        consume(TK_RPAREN, "Splice/SyntaxError Expected ')'");
-        return first;
-    }
-
-    if (match(TK_READ)) {
-        consume(TK_LPAREN, "Splice/SyntaxError Expected '(' after read");
-        ASTNode *e = parse_expression();
-        consume(TK_RPAREN, "Splice/SyntaxError Expected ')' after read");
-
-        ASTNode *n = ast_new(AST_READ);
-        n->read.expr = e;
-        return n;
-    }
-    if (match(TK_INPUT)) {
-        consume(TK_LPAREN, "Splice/SyntaxError Expected '(' after input");
-        ASTNode *e = parse_expression();
-        consume(TK_RPAREN, "Splice/SyntaxError Expected ')' after input prompt");
-        ASTNode *n = ast_new(AST_INPUT);
-        n->input.prompt = e;
-        return n;
-    }
-    if (match(TK_LBRACKET)) {
-        ASTNode **els=NULL;
-        int ec=0, cap=0;
-
-        if (!at(TK_RBRACKET)) {
-            for (;;) {
-                ASTNode *e = parse_expression();
-                if (ec>=cap) { cap = cap?cap*2:8; els=(ASTNode**)realloc(els,sizeof(ASTNode*)*(size_t)cap); }
-                els[ec++] = e;
-                if (!match(TK_COMMA)) break;
-            }
-        }
-        consume(TK_RBRACKET, "Splice/SyntaxError Expected ']' after array literal");
-
-        ASTNode *a = ast_new(AST_ARRAY_LITERAL);
-        a->arraylit.elements = els;
-        a->arraylit.count = ec;
-        return a;
-    }
-
-    error(peek()->line, "Splice/SyntaxError Expected expression");
-    return NULL;
+    P++;
 }
 
-static ASTNode *parse_unary(void) {
-    if (match(TK_NOT)) {
-        ASTNode *n = ast_new(AST_BINARY_OP);
-        n->binop.op = strdup("!");
-        n->binop.left = parse_unary();
-        n->binop.right = NULL;
-        return n;
+static ASTNode *parse_expr(void);
+static ASTNode *parse_stmt(void);
+static ASTNode *parse_block(void);
+
+/* primary: number|string|ident|call| (expr) */
+static ASTNode *parse_primary(void) {
+    if (match(TK_NUMBER)) {
+        return ast_number(G->data[P-1].num);
     }
+    if (match(TK_STRING)) {
+        return ast_string(G->data[P-1].lex ? G->data[P-1].lex : "");
+    }
+    if (match(TK_IDENT)) {
+        const char *name = G->data[P-1].lex;
+        /* call: ident() only (no args in your VM struct) */
+        if (match(TK_LPAREN)) {
+            expect(TK_RPAREN, "Expected ')' after call");
+            return ast_call0(name);
+        }
+        return ast_ident(name);
+    }
+    if (match(TK_LPAREN)) {
+        ASTNode *e = parse_expr();
+        expect(TK_RPAREN, "Expected ')'");
+        return e;
+    }
+    fprintf(stderr,"parse error line %d: expected primary\n", peek()->line);
+    exit(1);
+}
+
+/* unary: -x or !x */
+static ASTNode *parse_unary(void) {
     if (match(TK_MINUS)) {
-        /* -(x) => (-1 * x) */
-        ASTNode *mul = ast_new(AST_BINARY_OP);
-        mul->binop.op = strdup("*");
-        ASTNode *m1 = ast_new(AST_NUMBER);
-        m1->number = -1.0;
-        mul->binop.left = m1;
-        mul->binop.right = parse_unary();
-        return mul;
+        /* -(x) -> (-1 * x) */
+        return ast_binop("*", ast_number(-1.0), parse_unary());
+    }
+    if (match(TK_NOT)) {
+        /* !x -> (0 == x) is not correct; but your VM has no boolean type.
+           We'll implement !x as (x == 0) using binary op "!"? No.
+           We'll encode op "!" and expect VM to support it if you added it.
+           If VM doesn't support "!", remove this feature.
+        */
+        return ast_binop("!", parse_unary(), NULL);
     }
     return parse_primary();
 }
 
+/* mul: * / % */
 static ASTNode *parse_mul(void) {
-    ASTNode *left = parse_unary();
-    while (at(TK_STAR) || at(TK_SLASH)) {
-        TokType op = peek()->t; P++;
-        ASTNode *n = ast_new(AST_BINARY_OP);
-        n->binop.op = strdup(op==TK_STAR ? "*" : "/");
-        n->binop.left = left;
-        n->binop.right = parse_unary();
-        left = n;
+    ASTNode *l = parse_unary();
+    while (at(TK_STAR) || at(TK_SLASH) || at(TK_MOD)) {
+        TokType op = advance()->t;
+        const char *s = (op==TK_STAR)?"*":(op==TK_SLASH)?"/":"%";
+        ASTNode *r = parse_unary();
+        l = ast_binop(s, l, r);
     }
-    return left;
+    return l;
 }
 
+/* add: + - */
 static ASTNode *parse_add(void) {
-    ASTNode *left = parse_mul();
+    ASTNode *l = parse_mul();
     while (at(TK_PLUS) || at(TK_MINUS)) {
-        TokType op = peek()->t; P++;
-        ASTNode *n = ast_new(AST_BINARY_OP);
-        n->binop.op = strdup(op==TK_PLUS ? "+" : "-");
-        n->binop.left = left;
-        n->binop.right = parse_mul();
-        left = n;
+        TokType op = advance()->t;
+        const char *s = (op==TK_PLUS)?"+":"-";
+        ASTNode *r = parse_mul();
+        l = ast_binop(s, l, r);
     }
-    return left;
+    return l;
 }
 
+/* cmp: < > <= >= == != */
 static ASTNode *parse_cmp(void) {
-    ASTNode *left = parse_add();
+    ASTNode *l = parse_add();
     while (at(TK_LT)||at(TK_GT)||at(TK_LE)||at(TK_GE)||at(TK_EQ)||at(TK_NEQ)) {
-        TokType op = peek()->t; P++;
+        TokType op = advance()->t;
         const char *s =
             (op==TK_LT)?"<":(op==TK_GT)?">":(op==TK_LE)?"<=":(op==TK_GE)?">=":(op==TK_EQ)?"==":"!=";
-        ASTNode *n = ast_new(AST_BINARY_OP);
-        n->binop.op = strdup(s);
-        n->binop.left = left;
-        n->binop.right = parse_add();
-        left = n;
+        ASTNode *r = parse_add();
+        l = ast_binop(s, l, r);
     }
-    return left;
+    return l;
 }
 
+/* logic: && || (encoded as "&&" "||") */
 static ASTNode *parse_logic(void) {
-    ASTNode *left = parse_cmp();
+    ASTNode *l = parse_cmp();
     while (at(TK_AND) || at(TK_OR)) {
-        TokType op = peek()->t; P++;
-        ASTNode *n = ast_new(AST_BINARY_OP);
-        n->binop.op = strdup(op==TK_AND ? "&&" : "||");
-        n->binop.left = left;
-        n->binop.right = parse_cmp();
-        left = n;
+        TokType op = advance()->t;
+        const char *s = (op==TK_AND)?"&&":"||";
+        ASTNode *r = parse_cmp();
+        l = ast_binop(s, l, r);
     }
-    return left;
+    return l;
 }
 
-static ASTNode *parse_expression(void) { return parse_logic(); }
+static ASTNode *parse_expr(void) { return parse_logic(); }
 
-static ASTNode *parse_statements_until(TokType end) {
-    ASTNode **stmts=NULL;
-    int c=0, cap=0;
-
-    while (!at(end) && !at(TK_EOF)) {
-        ASTNode *s = parse_statement();
-        if (!s) { /* allow empty */ }
-        else {
-            if (c>=cap) { cap=cap?cap*2:16; stmts=(ASTNode**)realloc(stmts,sizeof(ASTNode*)*(size_t)cap); }
-            stmts[c++] = s;
-        }
-        match(TK_SEMI);
-    }
-
-    ASTNode *blk = ast_new(AST_STATEMENTS);
-    blk->statements.stmts = stmts;
-    blk->statements.count = c;
-    return blk;
+/* statement separators: many semis/newlines are ok */
+static void eat_separators(void) {
+    while (match(TK_SEMI)) {}
 }
 
-static ASTNode *parse_statement(void) {
+static ASTNode *parse_stmt(void) {
+    eat_separators();
+
     if (match(TK_LET)) {
-        Tok *id = consume(TK_IDENT, "Splice/SyntaxError Expected identifier after let");
-        consume(TK_ASSIGN, "Splice/SyntaxError Expected '=' after let name");
-        ASTNode *rhs = parse_expression();
-
-        ASTNode *n = ast_new(AST_LET);
-        n->var.varname = strdup(id->lex);
-        n->var.value = rhs;
-        return n;
+        expect(TK_IDENT, "Expected identifier after let");
+        const char *name = G->data[P-1].lex;
+        expect(TK_ASSIGN, "Expected '=' after let name");
+        ASTNode *rhs = parse_expr();
+        return ast_var(AST_LET, name, rhs);
     }
-    if (match(TK_CONTINUE)) {
-        return ast_new(AST_CONTINUE);
-    }
-    if (match(TK_BREAK)) {
-        return ast_new(AST_BREAK);
-    }
-
 
     if (match(TK_PRINT)) {
-        consume(TK_LPAREN, "Splice/SyntaxError Expected '(' after print");
-        ASTNode *e = parse_expression();
-        consume(TK_RPAREN, "Splice/SyntaxError Expected ')' after print expr");
-        ASTNode *n = ast_new(AST_PRINT);
-        n->print.expr = e;
-        return n;
-    }
-    if (match(TK_QUIT)) {
-        ASTNode *zero = ast_new(AST_NUMBER);
-        zero->number = 0;
-
-        ASTNode *ret = ast_new(AST_RETURN);
-        ret->retstmt.expr = zero;
-
-        return ret;
+        expect(TK_LPAREN, "Expected '(' after print");
+        ASTNode *e = parse_expr();
+        expect(TK_RPAREN, "Expected ')' after print");
+        return ast_print(e);
     }
 
-
-    if (match(TK_IMPORT)) {
-        Tok *f = consume(TK_STRING, "Splice/SyntaxError Expected string filename after import");
-
-        ASTNode *n = ast_new(AST_IMPORT);
-
-        const char *raw = f->lex ? f->lex : "";
-        const char *resolved = resolve_builtin_import(raw);
-
-        n->importstmt.filename = strdup(resolved);
-        return n;
-    }
-
-    if (match(TK_WRITE)) {
-        consume(TK_LPAREN, "Splice/SyntaxError Expected '(' after write");
-        ASTNode *path = parse_expression();
-        consume(TK_COMMA, "Splice/SyntaxError Expected ',' after write path");
-        ASTNode *val = parse_expression();
-        consume(TK_RPAREN, "Splice/SyntaxError Expected ')' after write");
-        ASTNode *n = ast_new(AST_WRITE);
-        n->write.path = path;
-        n->write.value = val;
-        return n;
-    }
-
-    if (match(TK_RAISE)) {
-        consume(TK_LPAREN, "Splice/SyntaxError Expected '(' after raise");
-        ASTNode *e = parse_expression();
-        consume(TK_RPAREN, "Splice/SyntaxError Expected ')' after raise expr");
-        ASTNode *n = ast_new(AST_RAISE);
-        n->raise.expr = e;
-        return n;
-    }
+    if (match(TK_BREAK)) return ast_new(AST_BREAK);
+    if (match(TK_CONTINUE)) return ast_new(AST_CONTINUE);
 
     if (match(TK_RETURN)) {
-        ASTNode *e = NULL;
-        if (!at(TK_SEMI) && !at(TK_RBRACE)) e = parse_expression();
-        ASTNode *n = ast_new(AST_RETURN);
-        n->retstmt.expr = e;
-        return n;
+        /* return expr; (expr optional) */
+        if (at(TK_SEMI) || at(TK_RBRACE) || at(TK_EOF)) return ast_return(NULL);
+        return ast_return(parse_expr());
     }
 
     if (match(TK_FUNC)) {
-        Tok *id = consume(TK_IDENT, "Splice/SyntaxError Expected function name");
-        consume(TK_LPAREN, "Splice/SyntaxError Expected '(' after func name");
-
-        char **params=NULL;
-        int pc=0, cap=0;
-
-        if (!at(TK_RPAREN)) {
-            for (;;) {
-                Tok *p = consume(TK_IDENT, "Splice/SyntaxError Expected param name");
-                if (pc>=cap) { cap=cap?cap*2:8; params=(char**)realloc(params,sizeof(char*)*(size_t)cap); }
-                params[pc++] = strdup(p->lex);
-                if (!match(TK_COMMA)) break;
-            }
-        }
-        consume(TK_RPAREN, "Splice/SyntaxError Expected ')' after params");
-
-        consume(TK_LBRACE, "Splice/SyntaxError Expected '{' before func body");
-        ASTNode *body = parse_statements_until(TK_RBRACE);
-        consume(TK_RBRACE, "Splice/SyntaxError Expected '}' after func body");  
-        ASTNode *n = ast_new(AST_FUNC_DEF);
-        n->funcdef.funcname = strdup(id->lex);
-        n->funcdef.params = params;
-        n->funcdef.param_count = pc;
-        n->funcdef.body = body;
-        return n;
+        expect(TK_IDENT, "Expected function name");
+        const char *name = G->data[P-1].lex;
+        expect(TK_LPAREN, "Expected '(' after func name");
+        expect(TK_RPAREN, "Expected ')' (no args supported)");
+        ASTNode *body = parse_block();
+        return ast_funcdef(name, body);
     }
 
     if (match(TK_IF)) {
-        consume(TK_LPAREN, "Splice/SyntaxError Expected '(' after if");
-        ASTNode *cond = parse_expression();
-        consume(TK_RPAREN, "Splice/SyntaxError Expected ')' after if cond");
-
-        consume(TK_LBRACE, "Splice/SyntaxError Expected '{' after if");
-        ASTNode *thenb = parse_statements_until(TK_RBRACE);
-        consume(TK_RBRACE, "Splice/SyntaxError Expected '}' after if body");
-
+        expect(TK_LPAREN, "Expected '(' after if");
+        ASTNode *cond = parse_expr();
+        expect(TK_RPAREN, "Expected ')'");
+        ASTNode *thenb = parse_block();
         ASTNode *elseb = NULL;
-
         if (match(TK_ELSE)) {
-            /* else if (...) { ... } */
-            if (at(TK_IF)) {
-                elseb = parse_statement();  // recurse → AST_IF
-            }
             /* else { ... } */
-            else {
-                consume(TK_LBRACE, "Splice/SyntaxError Expected '{' after else");
-                elseb = parse_statements_until(TK_RBRACE);
-                consume(TK_RBRACE, "Splice/SyntaxError Expected '}' after else body");
-            }
+            elseb = parse_block();
         }
-
-        ASTNode *n = ast_new(AST_IF);
-        n->ifstmt.condition   = cond;
-        n->ifstmt.then_branch = thenb;
-        n->ifstmt.else_branch = elseb;
-        return n;
+        return ast_if(cond, thenb, elseb);
     }
 
-
     if (match(TK_WHILE)) {
-        consume(TK_LPAREN, "Splice/SyntaxError Expected '(' after while");
-        ASTNode *cond = parse_expression();
-        consume(TK_RPAREN, "Splice/SyntaxError Expected ')' after while cond");
-        consume(TK_LBRACE, "Splice/SyntaxError Expected '{' after while");
-        ASTNode *body = parse_statements_until(TK_RBRACE);
-        consume(TK_RBRACE, "Splice/SyntaxError Expected '}' after while body");
-
-        ASTNode *n = ast_new(AST_WHILE);
-        n->whilestmt.cond = cond;
-        n->whilestmt.body = body;
-        return n;
+        expect(TK_LPAREN, "Expected '(' after while");
+        ASTNode *cond = parse_expr();
+        expect(TK_RPAREN, "Expected ')'");
+        ASTNode *body = parse_block();
+        return ast_while(cond, body);
     }
 
     if (match(TK_FOR)) {
-        Tok *id = consume(TK_IDENT, "Splice/SyntaxError Expected for variable");
-        consume(TK_IN, "Splice/SyntaxError Expected 'in' after for var");
-        ASTNode *start = parse_expression();
-        consume(TK_DOTDOT, "Splice/SyntaxError Expected '.' in for range");
-        ASTNode *end = parse_expression();
-        consume(TK_LBRACE, "Splice/SyntaxError Expected '{' after for range");
-        ASTNode *body = parse_statements_until(TK_RBRACE);
-        consume(TK_RBRACE, "Splice/SyntaxError Expected '}' after for body");
-
-        ASTNode *n = ast_new(AST_FOR);
-        n->forstmt.for_var = strdup(id->lex);
-        n->forstmt.for_start = start;
-        n->forstmt.for_end = end;
-        n->forstmt.for_body = body;
-        return n;
+        expect(TK_IDENT, "Expected for variable name");
+        const char *var = G->data[P-1].lex;
+        expect(TK_IN, "Expected 'in' after for var");
+        ASTNode *start = parse_expr();
+        expect(TK_DOTDOT, "Expected '..' in for range");
+        ASTNode *end = parse_expr();
+        ASTNode *body = parse_block();
+        return ast_for(var, start, end, body);
     }
 
-    /* assignment or expr statement */
-    if (at(TK_IDENT)) {
-        Tok *id = peek(); P++;
-
-        /* ident = expr */
-        if (match(TK_ASSIGN)) {
-            ASTNode *rhs = parse_expression();
-            ASTNode *n = ast_new(AST_ASSIGN);
-            n->var.varname = strdup(id->lex);
-            n->var.value = rhs;
-            return n;
-        }
-
-        /* ident[expr] = expr */
-        if (match(TK_LBRACKET)) {
-            ASTNode *idx = parse_expression();
-            consume(TK_RBRACKET, "Splice/SyntaxError Expected ']' after index");
-            consume(TK_ASSIGN, "Splice/SyntaxError Expected '=' after index");
-            ASTNode *rhs = parse_expression();
-
-            ASTNode *target = ast_new(AST_IDENTIFIER);
-            target->string = strdup(id->lex);
-
-            ASTNode *n = ast_new(AST_INDEX_ASSIGN);
-            n->indexassign.target = target;
-            n->indexassign.index = idx;
-            n->indexassign.value = rhs;
-            return n;
-        }
-
-        /* fall back: treat as expression starting with identifier */
-        P--; /* rewind */
+    /* assignment or expression statement */
+    if (at(TK_IDENT) && G->data[P+1].t == TK_ASSIGN) {
+        const char *name = advance()->lex;
+        advance(); /* '=' */
+        ASTNode *rhs = parse_expr();
+        return ast_var(AST_ASSIGN, name, rhs);
     }
 
-    /* expression statement */
-    return parse_expression();
+    /* expression stmt (incl call) */
+    return parse_expr();
 }
 
-/* Parse full program */
+static ASTNode *parse_block(void) {
+    expect(TK_LBRACE, "Expected '{'");
+
+    ASTNode **stmts = NULL;
+    int count = 0, cap = 0;
+
+    while (!at(TK_RBRACE) && !at(TK_EOF)) {
+        ASTNode *s = parse_stmt();
+        if (s) {
+            if (count >= cap) {
+                cap = cap ? cap*2 : 16;
+                stmts = (ASTNode**)xrealloc(stmts, sizeof(ASTNode*)*(size_t)cap);
+            }
+            stmts[count++] = s;
+        }
+        eat_separators();
+    }
+
+    expect(TK_RBRACE, "Expected '}'");
+    return ast_statements(stmts, count);
+}
+
 static ASTNode *parse_program(TokVec *v) {
     G = v; P = 0;
-    ASTNode *root = parse_statements_until(TK_EOF);
-    return root;
+
+    ASTNode **stmts = NULL;
+    int count=0, cap=0;
+
+    while (!at(TK_EOF)) {
+        ASTNode *s = parse_stmt();
+        if (s) {
+            if (count >= cap) {
+                cap = cap ? cap*2 : 16;
+                stmts = (ASTNode**)xrealloc(stmts, sizeof(ASTNode*)*(size_t)cap);
+            }
+            stmts[count++] = s;
+        }
+        eat_separators();
+    }
+
+    return ast_statements(stmts, count);
 }
 
-/* =========================
-   Main (spbuild)
-   ========================= */
+/* =========================================================
+   SPC WRITER (matches your VM)
+   ========================================================= */
+
+static void wr_u8(FILE *f, uint8_t v) { fwrite(&v,1,1,f); }
+
+static void wr_u32(FILE *f, uint32_t v) {
+    /* little-endian */
+    uint8_t b[4];
+    b[0] = (uint8_t)(v & 0xFF);
+    b[1] = (uint8_t)((v >> 8) & 0xFF);
+    b[2] = (uint8_t)((v >> 16) & 0xFF);
+    b[3] = (uint8_t)((v >> 24) & 0xFF);
+    fwrite(b,1,4,f);
+}
+
+static void wr_double(FILE *f, double v) {
+    fwrite(&v, 1, 8, f);
+}
+
+static void wr_str(FILE *f, const char *s) {
+    if (!s) s = "";
+    uint32_t len = (uint32_t)strlen(s);
+    wr_u32(f, len);
+    if (len) fwrite(s,1,len,f);
+}
+
+static void write_node(FILE *f, ASTNode *n);
+
+static void write_node(FILE *f, ASTNode *n) {
+    if (!n) {
+        /* NULL: write a dummy node of type AST_NUMBER with value 0
+           because your VM read_node() doesn't have a NULL sentinel.
+           This keeps structure valid when else/return expr is missing.
+        */
+        wr_u8(f, (uint8_t)AST_NUMBER);
+        wr_double(f, 0.0);
+        return;
+    }
+
+    wr_u8(f, (uint8_t)n->type);
+
+    switch (n->type) {
+        case AST_NUMBER:      wr_double(f, n->number); break;
+        case AST_STRING:
+        case AST_IDENTIFIER:  wr_str(f, n->string); break;
+
+        case AST_BINARY_OP:
+            wr_str(f, n->binop.op);
+            write_node(f, n->binop.left);
+            /* unary '!' encoded with right=NULL: emit 0 on right */
+            write_node(f, n->binop.right);
+            break;
+
+        case AST_PRINT:
+            write_node(f, n->print.expr);
+            break;
+
+        case AST_LET:
+        case AST_ASSIGN:
+            wr_str(f, n->var.name);
+            write_node(f, n->var.value);
+            break;
+
+        case AST_STATEMENTS:
+            wr_u32(f, (uint32_t)n->statements.count);
+            for (int i=0;i<n->statements.count;i++) write_node(f, n->statements.stmts[i]);
+            break;
+
+        case AST_WHILE:
+            write_node(f, n->whilestmt.cond);
+            write_node(f, n->whilestmt.body);
+            break;
+
+        case AST_IF:
+            write_node(f, n->ifstmt.cond);
+            write_node(f, n->ifstmt.then_b);
+            write_node(f, n->ifstmt.else_b);
+            break;
+
+        case AST_FOR:
+            wr_str(f, n->forstmt.var);
+            write_node(f, n->forstmt.start);
+            write_node(f, n->forstmt.end);
+            write_node(f, n->forstmt.body);
+            break;
+
+        case AST_FUNC_DEF:
+            wr_str(f, n->funcdef.name);
+            write_node(f, n->funcdef.body);
+            break;
+
+        case AST_FUNCTION_CALL:
+            wr_str(f, n->funccall.name);
+            break;
+
+        case AST_RETURN:
+            write_node(f, n->retstmt.expr);
+            break;
+
+        case AST_BREAK:
+        case AST_CONTINUE:
+            break;
+
+        default:
+            die("spbuild: unsupported node in writer");
+    }
+}
+
+static int write_spc(const char *out_path, ASTNode *root) {
+    FILE *f = fopen(out_path, "wb");
+    if (!f) return 0;
+    fwrite(SPC_MAGIC, 1, 4, f);
+    wr_u8(f, (uint8_t)SPC_VERSION);
+    write_node(f, root);
+    fclose(f);
+    return 1;
+}
+
+/* =========================================================
+   MAIN
+   ========================================================= */
+
+static char *read_file(const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    rewind(f);
+    if (sz < 0) { fclose(f); return NULL; }
+    char *buf = (char*)xmalloc((size_t)sz + 1);
+    size_t rd = fread(buf, 1, (size_t)sz, f);
+    buf[rd] = 0;
+    fclose(f);
+    return buf;
+}
+
 int main(int argc, char **argv) {
-    if (argc < 3) {
+    if (argc != 3) {
         fprintf(stderr, "Usage: %s <input.sp> <output.spc>\n", argv[0]);
         return 1;
     }
 
-    char *src = read_text_file(argv[1]);
+    const char *in = argv[1];
+    const char *out = argv[2];
+
+    char *src = read_file(in);
     if (!src) {
-        fprintf(stderr, "Could not read: %s\n", argv[1]);
+        fprintf(stderr, "spbuild: cannot read %s\n", in);
         return 1;
     }
 
-    TokVec tv; tv_init(&tv);
-    tokenize(src, &tv);
+    TokVec tv = {0};
+    lex(src, &tv);
 
     ASTNode *root = parse_program(&tv);
 
-    if (!write_ast_to_spc(argv[2], root)) {
-        fprintf(stderr, "Could not write: %s\n", argv[2]);
+    if (!write_spc(out, root)) {
+        fprintf(stderr, "spbuild: failed to write %s\n", out);
         free_ast(root);
         tv_free(&tv);
         free(src);
         return 1;
     }
-
-    success(0, "Wrote AST SPC: %s", argv[2]);
 
     free_ast(root);
     tv_free(&tv);
