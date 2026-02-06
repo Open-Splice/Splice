@@ -855,54 +855,31 @@ static int resolve_input_path(const char *arg, char *dst, size_t dst_len) {
     return 1;
 }
 
-static int resolve_output_path(const char *arg, char *dst, size_t dst_len) {
-    if (!is_safe_relative_path(arg)) {
+static int is_safe_filename(const char *name) {
+    if (name == NULL || *name == '\0') {
         return 0;
     }
-
-    const char *slash = strrchr(arg, '/');
-    const char *bslash = strrchr(arg, '\\');
-    if (bslash && (!slash || bslash > slash)) {
-        slash = bslash;
-    }
-
-    char dir[PATH_MAX];
-    const char *base = arg;
-    if (slash) {
-        size_t dlen = (size_t)(slash - arg);
-        if (dlen == 0 || dlen >= sizeof(dir)) {
+    for (const char *p = name; *p; p++) {
+        unsigned char c = (unsigned char)*p;
+        if (!(c == '.' || c == '_' || c == '-' ||
+              (c >= '0' && c <= '9') ||
+              (c >= 'A' && c <= 'Z') ||
+              (c >= 'a' && c <= 'z'))) {
             return 0;
         }
-        memcpy(dir, arg, dlen);
-        dir[dlen] = '\0';
-        base = slash + 1;
-    } else {
-        strcpy(dir, ".");
     }
-
-    if (*base == '\0' || strcmp(base, ".") == 0 || strcmp(base, "..") == 0) {
-        return 0;
-    }
-    if (strchr(base, '/') != NULL || strchr(base, '\\') != NULL) {
-        return 0;
-    }
-
-    char cwd[PATH_MAX];
-    char dir_resolved[PATH_MAX];
-    if (!splice_getcwd(cwd, sizeof(cwd))) {
-        return 0;
-    }
-    if (!fullpath_buf(dir, dir_resolved, sizeof(dir_resolved))) {
-        return 0;
-    }
-    if (!path_within_base(dir_resolved, cwd)) {
-        return 0;
-    }
-
-    if (snprintf(dst, dst_len, "%s/%s", dir_resolved, base) >= (int)dst_len) {
+    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
         return 0;
     }
     return 1;
+}
+
+static int ensure_out_dir(const char *dir) {
+    struct stat st;
+    if (stat(dir, &st) == 0) {
+        return S_ISDIR(st.st_mode);
+    }
+    return mkdir(dir, 0755) == 0;
 }
 
 int main(int argc, char **argv) {
@@ -915,14 +892,25 @@ int main(int argc, char **argv) {
     const char *out_arg = argv[2];
     char in_path[PATH_MAX];
     char out_path[PATH_MAX];
+    const char *out_dir = "./out";
 
     if (!resolve_input_path(in_arg, in_path, sizeof(in_path))) {
         fprintf(stderr, "spbuild: unsafe input path '%s'\n", in_arg);
         return 1;
     }
 
-    if (!resolve_output_path(out_arg, out_path, sizeof(out_path))) {
-        fprintf(stderr, "spbuild: unsafe output path '%s'\n", out_arg);
+    if (!is_safe_filename(out_arg)) {
+        fprintf(stderr, "spbuild: unsafe output filename '%s'\n", out_arg);
+        return 1;
+    }
+
+    if (!ensure_out_dir(out_dir)) {
+        fprintf(stderr, "spbuild: cannot create output dir %s\n", out_dir);
+        return 1;
+    }
+
+    if (snprintf(out_path, sizeof(out_path), "%s/%s", out_dir, out_arg) >= (int)sizeof(out_path)) {
+        fprintf(stderr, "spbuild: output path too long\n");
         return 1;
     }
 
