@@ -1,2 +1,28 @@
-let vmver = "1.0.0"
-print("If this is running, SpliceVM version: " + vmver + " is working correctly")
+let v = "1.0.0"
+print("Splice VM version " + v)
+print("Testing system")
+print("Testing array")
+nums = [1,2,3];
+print(len(nums));
+append(nums, 42);
+print(len(nums));
+print(nums[2]);
+nums[5] = 99;
+print(len(nums));
+print(nums[5]);
+print("Testing calculator")
+func calculator(num1, num2, op) {
+    if (op == "+") {
+        print(num1 + num2);
+    } else if (op == "-") {
+        print(num1 - num2);
+    }
+}
+
+calculator(5, 3, "+");   
+calculator(5, 6, "-");   
+print("Testing For loops")
+print("For loops in Splice");
+for i in 1 .. 10 {
+  print(i);
+}

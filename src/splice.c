@@ -89,6 +89,8 @@ int main(int argc, char **argv) {
 
     if (strcmp(argv[1], "-v") == 0) {
         printf("Splice Version 1.0.0\n");
+        printf("Splice(TM) VM Enviorment (build 1.0.0)\n");
+        printf("Splice(TM) Compiler Crosschain (spbuild) build 1.0.0\n");
         return 0;
     }
 
@@ -139,37 +141,16 @@ int main(int argc, char **argv) {
 
     fclose(f);
 
-    /* =========================
-       Reset VM state (important!)
-       ========================= */
-
-    splice_reset_vm();
-
-    /* =========================
-       Load AST from memory
-       ========================= */
-    arena_init(64 * 1024);
-    ASTNode *root = read_ast_from_spc_mem(buf, (size_t)size);
-    if (!root) {
-        fprintf(stderr, "[ERROR] failed to parse SPC\n");
+    if (!splice_execute_bytecode(buf, (size_t)size)) {
+        fprintf(stderr, "[ERROR] failed to execute SPC\n");
         free(buf);
         return 1;
     }
 
     /* =========================
-       Execute program
-       ========================= */
-
-    interpret(root);
-
-    /* =========================
        Cleanup
        ========================= */
 
-    /*
-      DO NOT free AST here unless you have a free_ast().
-      VM owns AST lifetime.
-    */
     free(buf);
 
 

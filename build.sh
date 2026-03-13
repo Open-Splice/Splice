@@ -25,8 +25,16 @@ gcc -DSDK_IMPLEMENTATION -Isrc -Wall -Wextra -c -Ofast -march=native -mtune=nati
 # Compile native module without SDK_IMPLEMENTATION
 gcc -Isrc -Wall -Wextra -c -Ofast -march=native -mtune=native -flto -fomit-frame-pointer -funroll-loops -fno-semantic-interposition -fno-math-errno -fno-trapping-math -fstrict-aliasing -DNDEBUG src/module_stubs.c -o "$BIN_DIR/module_stubs.o"
 
+# Export runtime symbols so dynamically loaded native modules can resolve sdk globals.
+LINK_EXPORT_FLAGS=""
+if [[ "$OS" == "linux" ]]; then
+    LINK_EXPORT_FLAGS="-rdynamic"
+elif [[ "$OS" == "darwin" ]]; then
+    LINK_EXPORT_FLAGS="-Wl,-export_dynamic"
+fi
+
 # Link executable (local binary: Splice)
-gcc "$BIN_DIR/Splice.o" "$BIN_DIR/module_stubs.o" -o "$BIN_DIR/Splice"
+gcc $LINK_EXPORT_FLAGS "$BIN_DIR/Splice.o" "$BIN_DIR/module_stubs.o" -o "$BIN_DIR/Splice"
 
 echo "Building spbuild (bytecode compiler)..."
 gcc -Isrc -Wall -Wextra -Ofast -march=native -mtune=native -flto -fomit-frame-pointer -funroll-loops -fno-semantic-interposition -fno-math-errno -fno-trapping-math -fstrict-aliasing -DNDEBUG src/build.c -o "$BIN_DIR/spbuild"
