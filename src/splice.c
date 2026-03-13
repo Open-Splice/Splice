@@ -1,9 +1,22 @@
 #define SPLICE_NO_INLINE_MEMREADER
 
+#include "splice.h"
+#include "sdk.h"
+
+#if SPLICE_EMBED
+
+int splice_run_embedded_program(const unsigned char *data, size_t size) {
+    if (!data || size == 0) {
+        return 0;
+    }
+    return splice_execute_bytecode(data, size);
+}
+
+#else
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdarg.h>
 #include <limits.h>
 #include <unistd.h>
 #ifdef _WIN32
@@ -19,23 +32,6 @@
 #else
 #define splice_getcwd getcwd
 #endif
-
-#include "splice.h"
-#include "sdk.h"
-
-/* =========================
-   Logging helpers
-   ========================= */
-
-static void success(int ln, const char *fmt, ...) {
-    (void)ln;
-    va_list ap;
-    va_start(ap, fmt);
-    fprintf(stdout, "[OK] ");
-    vfprintf(stdout, fmt, ap);
-    fprintf(stdout, "\n");
-    va_end(ap);
-}
 
 /* =========================
    CLI VM entry
@@ -89,6 +85,8 @@ int main(int argc, char **argv) {
 
     if (strcmp(argv[1], "-v") == 0) {
         printf("Splice Version 1.0.0\n");
+        printf("Splice(TM) VM Enviorment (build 1.0.0)\n");
+        printf("Splice(TM) Compiler Crosschain (spbuild) build 1.0.0\n");
         return 0;
     }
 
@@ -139,39 +137,20 @@ int main(int argc, char **argv) {
 
     fclose(f);
 
-    /* =========================
-       Reset VM state (important!)
-       ========================= */
-
-    splice_reset_vm();
-
-    /* =========================
-       Load AST from memory
-       ========================= */
-    arena_init(64 * 1024);
-    ASTNode *root = read_ast_from_spc_mem(buf, (size_t)size);
-    if (!root) {
-        fprintf(stderr, "[ERROR] failed to parse SPC\n");
+    if (!splice_execute_bytecode(buf, (size_t)size)) {
+        fprintf(stderr, "[ERROR] failed to execute SPC\n");
         free(buf);
         return 1;
     }
 
     /* =========================
-       Execute program
-       ========================= */
-
-    interpret(root);
-
-    /* =========================
        Cleanup
        ========================= */
 
-    /*
-      DO NOT free AST here unless you have a free_ast().
-      VM owns AST lifetime.
-    */
     free(buf);
 
 
     return 0;
 }
+
+#endif

@@ -4,17 +4,28 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>   // tolower, isspace
-#ifdef ARDUINO
-  #define SPLICE_EMBED 1
+#include <stdio.h>
+#include <limits.h>
+#if defined(ARDUINO) || defined(SPLICE_PLATFORM_ARDUINO)
+#define SPLICE_EMBED 1
 #else
-  #define SPLICE_EMBED 0
+#define SPLICE_EMBED 0
+#endif
+
+#if !defined(_WIN32) && !defined(__MINGW32__) && !defined(__MINGW64__) && !defined(__CYGWIN__)
+#define SPLICE_HAS_POSIX_NATIVE_MODULES 1
+#include <dlfcn.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#else
+#define SPLICE_HAS_POSIX_NATIVE_MODULES 0
 #endif
 
 
 /* ============================================================
    Value forward declaration (from Splice.h)
    ============================================================ */
-struct Value;
+typedef struct Value Value;
 
 
 /* ============================================================
@@ -33,7 +44,7 @@ typedef struct {
     SpliceCFunc func;
 } SpliceCFuncEntry;
 
-#define MAX_NATIVE_FUNCS 16
+#define MAX_NATIVE_FUNCS 128
 #define MAX_MODULES      8
 
 extern SpliceCFuncEntry Splice_native_funcs[MAX_NATIVE_FUNCS];
@@ -98,11 +109,122 @@ static inline void Splice_init_all_modules(void) {
     }
 }
 
+int Splice_load_c_module_source(const char *src_path);
+
 #ifdef SDK_IMPLEMENTATION
 SpliceCFuncEntry Splice_native_funcs[MAX_NATIVE_FUNCS];
 int Splice_native_func_count = 0;
 SpliceModuleInit Splice_modules[MAX_MODULES];
 int Splice_module_count = 0;
+
+#if SPLICE_HAS_POSIX_NATIVE_MODULES
+#define MAX_DYNAMIC_MODULES 16
+static char *Splice_dynamic_module_sources[MAX_DYNAMIC_MODULES];
+static void *Splice_dynamic_module_handles[MAX_DYNAMIC_MODULES];
+static int Splice_dynamic_module_count = 0;
+
+static unsigned Splice_hash_path(const char *s) {
+    unsigned h = 2166136261u;
+    while (*s) {
+        h ^= (unsigned char)*s++;
+        h *= 16777619u;
+    }
+    return h;
+}
+
+static int Splice_try_compile_module(const char *include_dir, const char *resolved, const char *module_path) {
+    if (!include_dir || !*include_dir) return 0;
+    if (!resolved || !*resolved || !module_path || !*module_path) return 0;
+
+    pid_t pid = fork();
+    if (pid < 0) return 0;
+
+    if (pid == 0) {
+#ifdef __APPLE__
+        execlp("cc", "cc",
+               "-fPIC",
+               "-shared",
+               "-undefined", "dynamic_lookup",
+               "-I", include_dir,
+               resolved,
+               "-o", module_path,
+               (char *)NULL);
+#else
+        execlp("cc", "cc",
+               "-fPIC",
+               "-shared",
+               "-I", include_dir,
+               resolved,
+               "-o", module_path,
+               (char *)NULL);
+#endif
+        _exit(127);
+    }
+
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) return 0;
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+#endif
+
+int Splice_load_c_module_source(const char *src_path) {
+#if !SPLICE_HAS_POSIX_NATIVE_MODULES
+    (void)src_path;
+    return 0;
+#else
+    if (!src_path || !*src_path) return 0;
+
+    char resolved[PATH_MAX];
+    if (!realpath(src_path, resolved)) return 0;
+
+    for (int i = 0; i < Splice_dynamic_module_count; i++) {
+        if (strcmp(Splice_dynamic_module_sources[i], resolved) == 0) return 1;
+    }
+    if (Splice_dynamic_module_count >= MAX_DYNAMIC_MODULES) return 0;
+
+    unsigned h = Splice_hash_path(resolved);
+    char module_path[PATH_MAX];
+#ifdef __APPLE__
+    if (snprintf(module_path, sizeof(module_path), "/tmp/splice_native_%u.dylib", h) >= (int)sizeof(module_path)) return 0;
+#else
+    if (snprintf(module_path, sizeof(module_path), "/tmp/splice_native_%u.so", h) >= (int)sizeof(module_path)) return 0;
+#endif
+
+    const char *env_include = getenv("SPLICE_SDK_INCLUDE");
+    char src_dir[PATH_MAX];
+    if (snprintf(src_dir, sizeof(src_dir), "%s", resolved) >= (int)sizeof(src_dir)) return 0;
+    char *slash = strrchr(src_dir, '/');
+    if (!slash) slash = strrchr(src_dir, '\\');
+    if (!slash) return 0;
+    *slash = '\0';
+
+    char parent_src[PATH_MAX];
+    char sibling_src[PATH_MAX];
+    if (snprintf(parent_src, sizeof(parent_src), "%s/../src", src_dir) >= (int)sizeof(parent_src)) return 0;
+    if (snprintf(sibling_src, sizeof(sibling_src), "%s/src", src_dir) >= (int)sizeof(sibling_src)) return 0;
+
+    int compiled = 0;
+    if (env_include && *env_include) {
+        compiled = Splice_try_compile_module(env_include, resolved, module_path);
+    }
+    if (!compiled) compiled = Splice_try_compile_module(parent_src, resolved, module_path);
+    if (!compiled) compiled = Splice_try_compile_module(sibling_src, resolved, module_path);
+    if (!compiled) compiled = Splice_try_compile_module("./src", resolved, module_path);
+    if (!compiled) return 0;
+
+    void *hnd = dlopen(module_path, RTLD_NOW | RTLD_GLOBAL);
+    if (!hnd) return 0;
+
+    Splice_dynamic_module_sources[Splice_dynamic_module_count] = strdup(resolved);
+    if (!Splice_dynamic_module_sources[Splice_dynamic_module_count]) {
+        dlclose(hnd);
+        return 0;
+    }
+    Splice_dynamic_module_handles[Splice_dynamic_module_count] = hnd;
+    Splice_dynamic_module_count++;
+    return 1;
+#endif
+}
 #endif
 
 #else  /* ================= SPLICE_EMBED ================= */
@@ -128,6 +250,11 @@ static inline void Splice_register_module(void (*init)(void)) {
 
 static inline void Splice_init_all_modules(void) {
     /* nothing */
+}
+
+static inline int Splice_load_c_module_source(const char *src_path) {
+    (void)src_path;
+    return 0;
 }
 
 #endif /* SPLICE_EMBED */

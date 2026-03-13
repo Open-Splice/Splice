@@ -1,0 +1,75 @@
+let stack = []
+
+func push(v) {
+    append(stack, v)
+}
+func pop() {
+    let n = len(stack)
+    let v = stack[n - 1]
+    stack = slice(stack, 0, n - 1)
+    return v
+}
+
+func is_number(t) {
+    return to_number(t) != 0 or t == "0"
+}
+
+func exec(token) {
+
+    if (token == "") {
+        return
+    }
+
+    if (token == "+") {
+        let b = pop()
+        let a = pop()
+        push(a + b)
+        return
+    }
+
+    if (token == "-") {
+        let b = pop()
+        let a = pop()
+        push(a - b)
+        return
+    }
+
+    if (token == "*") {
+        let b = pop()
+        let a = pop()
+        push(a * b)
+        return
+    }
+
+    if (token == "/") {
+        let b = pop()
+        let a = pop()
+        push(a / b)
+        return
+    }
+
+    if (token == "print") {
+        print(pop())
+        return
+    }
+
+    push(to_number(token))
+}x
+
+func run(program) {
+    let tokens = split(program, "\n")
+    let i = 0
+
+    while (i < len(tokens)) {
+        exec(tokens[i])
+        i = i + 1
+    }
+}
+let code = "
+10
+20
++
+print
+"
+print("RUNNING")
+run(code)
