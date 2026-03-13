@@ -114,6 +114,20 @@ static int splice_allocation_fits(size_t count, size_t elem_size) {
     return count * elem_size <= (size_t)SPLICE_MAX_ALLOC_SIZE;
 }
 
+static int splice_remaining_at_least(size_t size, size_t pos, size_t needed) {
+    return pos <= size && needed <= (size - pos);
+}
+
+static void *splice_malloc_bytes(size_t size_bytes) {
+    if (size_bytes > (size_t)SPLICE_MAX_ALLOC_SIZE) return NULL;
+    return malloc(size_bytes);
+}
+
+static void *splice_calloc_checked(size_t count, size_t elem_size) {
+    if (!splice_allocation_fits(count, elem_size)) return NULL;
+    return calloc(count, elem_size);
+}
+
 static int splice_array_capacity_valid(size_t capacity) {
     return capacity <= SPLICE_MAX_ARRAY_CAPACITY;
 }
@@ -361,8 +375,9 @@ static double rd_double(const unsigned char *data, size_t size, size_t *pos) {
 
 static char *rd_str(const unsigned char *data, size_t size, size_t *pos) {
     uint32_t len = rd_u32(data, size, pos);
-    if (*pos + len > size) SPLICE_FAIL("SPC_STR");
-    char *s = (char *)malloc((size_t)len + 1);
+    if ((size_t)len > SIZE_MAX - 1u) SPLICE_FAIL("SPC_STR");
+    if (!splice_remaining_at_least(size, *pos, (size_t)len)) SPLICE_FAIL("SPC_STR");
+    char *s = (char *)splice_malloc_bytes((size_t)len + 1u);
     if (!s) SPLICE_FAIL("OOM");
     memcpy(s, data + *pos, len);
     s[len] = 0;
@@ -408,10 +423,11 @@ static int load_program(const unsigned char *data, size_t size, BytecodeProgram 
 
     out->const_count = rd_u16(data, size, &pos);
     size_t const_capacity = out->const_count ? (size_t)out->const_count : 1u;
+    if (!splice_remaining_at_least(size, pos, (size_t)out->const_count)) return 0;
     if (out->const_count > SPLICE_MAX_CONST_COUNT) return 0;
     if (!splice_array_capacity_valid(const_capacity)) return 0;
     if (!splice_allocation_fits(const_capacity, sizeof(Constant))) return 0;
-    out->consts = (Constant *)calloc(const_capacity, sizeof(Constant));
+    out->consts = (Constant *)splice_calloc_checked(const_capacity, sizeof(Constant));
     if (!out->consts) return 0;
     for (uint16_t i = 0; i < out->const_count; i++) {
         out->consts[i].type = rd_u8(data, size, &pos);
@@ -426,10 +442,11 @@ static int load_program(const unsigned char *data, size_t size, BytecodeProgram 
 
     out->symbol_count = rd_u16(data, size, &pos);
     size_t symbol_capacity = out->symbol_count ? (size_t)out->symbol_count : 1u;
+    if (!splice_remaining_at_least(size, pos, symbol_capacity * sizeof(uint32_t))) return 0;
     if (out->symbol_count > SPLICE_MAX_SYMBOL_COUNT) return 0;
     if (!splice_array_capacity_valid(symbol_capacity)) return 0;
     if (!splice_allocation_fits(symbol_capacity, sizeof(char *))) return 0;
-    out->symbols = (const char **)calloc(symbol_capacity, sizeof(char *));
+    out->symbols = (const char **)splice_calloc_checked(symbol_capacity, sizeof(char *));
     if (!out->symbols) return 0;
     for (uint16_t i = 0; i < out->symbol_count; i++) {
         out->symbols[i] = rd_str(data, size, &pos);
@@ -437,10 +454,11 @@ static int load_program(const unsigned char *data, size_t size, BytecodeProgram 
 
     out->func_count = rd_u16(data, size, &pos);
     size_t func_capacity = out->func_count ? (size_t)out->func_count : 1u;
+    if (!splice_remaining_at_least(size, pos, func_capacity * (sizeof(uint16_t) * 2u + sizeof(uint32_t)))) return 0;
     if (out->func_count > SPLICE_MAX_FUNC_COUNT) return 0;
     if (!splice_array_capacity_valid(func_capacity)) return 0;
     if (!splice_allocation_fits(func_capacity, sizeof(FunctionEntry))) return 0;
-    out->funcs = (FunctionEntry *)calloc(func_capacity, sizeof(FunctionEntry));
+    out->funcs = (FunctionEntry *)splice_calloc_checked(func_capacity, sizeof(FunctionEntry));
     if (!out->funcs) return 0;
     for (uint16_t i = 0; i < out->func_count; i++) {
         out->funcs[i].symbol = rd_u16(data, size, &pos);
@@ -449,9 +467,10 @@ static int load_program(const unsigned char *data, size_t size, BytecodeProgram 
         out->funcs[i].addr = rd_u32(data, size, &pos);
         if (out->funcs[i].param_count > 0) {
             size_t param_capacity = (size_t)out->funcs[i].param_count;
+            if (!splice_remaining_at_least(size, pos, param_capacity * sizeof(uint16_t))) return 0;
             if (!splice_array_capacity_valid(param_capacity)) return 0;
             if (!splice_allocation_fits(param_capacity, sizeof(uint16_t))) return 0;
-            out->funcs[i].params = (uint16_t *)calloc(param_capacity, sizeof(uint16_t));
+            out->funcs[i].params = (uint16_t *)splice_calloc_checked(param_capacity, sizeof(uint16_t));
             if (!out->funcs[i].params) return 0;
             for (uint16_t j = 0; j < out->funcs[i].param_count; j++) {
                 out->funcs[i].params[j] = rd_u16(data, size, &pos);
@@ -460,7 +479,7 @@ static int load_program(const unsigned char *data, size_t size, BytecodeProgram 
     }
 
     if (!splice_allocation_fits(symbol_capacity, sizeof(FunctionEntry *))) return 0;
-    out->func_by_symbol = (FunctionEntry **)calloc(symbol_capacity, sizeof(FunctionEntry *));
+    out->func_by_symbol = (FunctionEntry **)splice_calloc_checked(symbol_capacity, sizeof(FunctionEntry *));
     if (!out->func_by_symbol) return 0;
     for (uint16_t i = 0; i < out->func_count; i++) {
         if (out->funcs[i].symbol < out->symbol_count) out->func_by_symbol[out->funcs[i].symbol] = &out->funcs[i];
@@ -472,10 +491,10 @@ static int load_program(const unsigned char *data, size_t size, BytecodeProgram 
     size_t frame_slots = symbol_capacity * (size_t)VAR_STACK_MAX;
     if (!splice_allocation_fits(frame_slots, sizeof(Value))) return 0;
     if (!splice_allocation_fits(frame_slots, sizeof(uint8_t))) return 0;
-    out->global_values = (Value *)calloc(symbol_capacity, sizeof(Value));
-    out->global_used = (uint8_t *)calloc(symbol_capacity, sizeof(uint8_t));
-    out->frame_values = (Value *)calloc(frame_slots, sizeof(Value));
-    out->frame_stamp = (uint8_t *)calloc(frame_slots, sizeof(uint8_t));
+    out->global_values = (Value *)splice_calloc_checked(symbol_capacity, sizeof(Value));
+    out->global_used = (uint8_t *)splice_calloc_checked(symbol_capacity, sizeof(uint8_t));
+    out->frame_values = (Value *)splice_calloc_checked(frame_slots, sizeof(Value));
+    out->frame_stamp = (uint8_t *)splice_calloc_checked(frame_slots, sizeof(uint8_t));
     if (!out->global_values || !out->global_used || !out->frame_values || !out->frame_stamp) return 0;
 
     out->code_size = rd_u32(data, size, &pos);
