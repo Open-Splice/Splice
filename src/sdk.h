@@ -8,6 +8,7 @@
 #include <limits.h>
 #ifndef _WIN32
 #include <dlfcn.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #endif
 #ifdef ARDUINO
@@ -128,20 +129,36 @@ static unsigned Splice_hash_path(const char *s) {
 
 static int Splice_try_compile_module(const char *include_dir, const char *resolved, const char *module_path) {
     if (!include_dir || !*include_dir) return 0;
-    if (strchr(include_dir, '"') || strchr(resolved, '"') || strchr(module_path, '"')) return 0;
+    if (!resolved || !*resolved || !module_path || !*module_path) return 0;
 
-    char cmd[PATH_MAX * 3];
+    pid_t pid = fork();
+    if (pid < 0) return 0;
+
+    if (pid == 0) {
 #ifdef __APPLE__
-    int n = snprintf(cmd, sizeof(cmd),
-        "cc -fPIC -shared -undefined dynamic_lookup -I\"%s\" \"%s\" -o \"%s\"",
-        include_dir, resolved, module_path);
+        execlp("cc", "cc",
+               "-fPIC",
+               "-shared",
+               "-undefined", "dynamic_lookup",
+               "-I", include_dir,
+               resolved,
+               "-o", module_path,
+               (char *)NULL);
 #else
-    int n = snprintf(cmd, sizeof(cmd),
-        "cc -fPIC -shared -I\"%s\" \"%s\" -o \"%s\"",
-        include_dir, resolved, module_path);
+        execlp("cc", "cc",
+               "-fPIC",
+               "-shared",
+               "-I", include_dir,
+               resolved,
+               "-o", module_path,
+               (char *)NULL);
 #endif
-    if (n <= 0 || n >= (int)sizeof(cmd)) return 0;
-    return system(cmd) == 0;
+        _exit(127);
+    }
+
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) return 0;
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
 int Splice_load_c_module_source(const char *src_path) {

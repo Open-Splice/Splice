@@ -5,6 +5,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <limits.h>
 #include <math.h>
 #ifdef _WIN32
 #include <windows.h>
@@ -20,6 +21,38 @@
 #define SPLICE_PRINTLN(s) puts(s)
 #define SPLICE_FAIL(msg) do { fprintf(stderr, "%s\n", msg); exit(1); } while (0)
 #endif
+
+#ifndef SPLICE_MAX_CONST_COUNT
+#define SPLICE_MAX_CONST_COUNT 16384u
+#endif
+
+#ifndef SPLICE_MAX_SYMBOL_COUNT
+#define SPLICE_MAX_SYMBOL_COUNT 16384u
+#endif
+
+#ifndef SPLICE_MAX_FUNC_COUNT
+#define SPLICE_MAX_FUNC_COUNT 16384u
+#endif
+
+#ifndef SPLICE_MAX_PARAM_COUNT
+#define SPLICE_MAX_PARAM_COUNT 1024u
+#endif
+
+#ifndef SPLICE_MAX_ARRAY_CAPACITY
+#define SPLICE_MAX_ARRAY_CAPACITY 1048576u
+#endif
+
+static int splice_mul_overflows_size(size_t a, size_t b) {
+    return a != 0 && b > SIZE_MAX / a;
+}
+
+static int splice_count_fits(size_t count, size_t elem_size) {
+    return !splice_mul_overflows_size(count, elem_size);
+}
+
+static int splice_array_capacity_valid(size_t capacity) {
+    return capacity <= SPLICE_MAX_ARRAY_CAPACITY;
+}
 
 /* ================= VALUES ================= */
 
@@ -43,6 +76,34 @@ typedef struct {
     int capacity;
     Value *items;
 } ObjArray;
+
+static int splice_array_reserve(ObjArray *oa, size_t min_capacity) {
+    if (!oa) return 0;
+    if (!splice_array_capacity_valid(min_capacity)) return 0;
+
+    size_t cap = oa->capacity > 0 ? (size_t)oa->capacity : 0u;
+    if (cap >= min_capacity) return 1;
+
+    size_t newcap = cap ? cap : 4u;
+    while (newcap < min_capacity) {
+        if (newcap >= SPLICE_MAX_ARRAY_CAPACITY) {
+            newcap = SPLICE_MAX_ARRAY_CAPACITY;
+            break;
+        }
+        if (newcap > SPLICE_MAX_ARRAY_CAPACITY / 2u) {
+            newcap = SPLICE_MAX_ARRAY_CAPACITY;
+        } else {
+            newcap *= 2u;
+        }
+    }
+    if (newcap < min_capacity || !splice_count_fits(newcap, sizeof(Value))) return 0;
+
+    Value *ni = (Value *)realloc(oa->items, sizeof(Value) * newcap);
+    if (!ni) return 0;
+    oa->items = ni;
+    oa->capacity = (int)newcap;
+    return 1;
+}
 
 /* SDK depends on Value being defined */
 #include "sdk.h"
@@ -280,6 +341,8 @@ static int load_program(const unsigned char *data, size_t size, BytecodeProgram 
     size_t pos = 5;
 
     out->const_count = rd_u16(data, size, &pos);
+    if (out->const_count > SPLICE_MAX_CONST_COUNT) return 0;
+    if (!splice_count_fits(out->const_count ? out->const_count : 1u, sizeof(Constant))) return 0;
     out->consts = (Constant *)calloc(out->const_count ? out->const_count : 1, sizeof(Constant));
     if (!out->consts) return 0;
     for (uint16_t i = 0; i < out->const_count; i++) {
@@ -294,6 +357,8 @@ static int load_program(const unsigned char *data, size_t size, BytecodeProgram 
     }
 
     out->symbol_count = rd_u16(data, size, &pos);
+    if (out->symbol_count > SPLICE_MAX_SYMBOL_COUNT) return 0;
+    if (!splice_count_fits(out->symbol_count ? out->symbol_count : 1u, sizeof(char *))) return 0;
     out->symbols = (const char **)calloc(out->symbol_count ? out->symbol_count : 1, sizeof(char *));
     if (!out->symbols) return 0;
     for (uint16_t i = 0; i < out->symbol_count; i++) {
@@ -301,13 +366,17 @@ static int load_program(const unsigned char *data, size_t size, BytecodeProgram 
     }
 
     out->func_count = rd_u16(data, size, &pos);
+    if (out->func_count > SPLICE_MAX_FUNC_COUNT) return 0;
+    if (!splice_count_fits(out->func_count ? out->func_count : 1u, sizeof(FunctionEntry))) return 0;
     out->funcs = (FunctionEntry *)calloc(out->func_count ? out->func_count : 1, sizeof(FunctionEntry));
     if (!out->funcs) return 0;
     for (uint16_t i = 0; i < out->func_count; i++) {
         out->funcs[i].symbol = rd_u16(data, size, &pos);
         out->funcs[i].param_count = rd_u16(data, size, &pos);
+        if (out->funcs[i].param_count > SPLICE_MAX_PARAM_COUNT) return 0;
         out->funcs[i].addr = rd_u32(data, size, &pos);
         if (out->funcs[i].param_count > 0) {
+            if (!splice_count_fits(out->funcs[i].param_count, sizeof(uint16_t))) return 0;
             out->funcs[i].params = (uint16_t *)calloc(out->funcs[i].param_count, sizeof(uint16_t));
             if (!out->funcs[i].params) return 0;
             for (uint16_t j = 0; j < out->funcs[i].param_count; j++) {
@@ -316,16 +385,23 @@ static int load_program(const unsigned char *data, size_t size, BytecodeProgram 
         }
     }
 
+    if (!splice_count_fits(out->symbol_count ? out->symbol_count : 1u, sizeof(FunctionEntry *))) return 0;
     out->func_by_symbol = (FunctionEntry **)calloc(out->symbol_count ? out->symbol_count : 1, sizeof(FunctionEntry *));
     if (!out->func_by_symbol) return 0;
     for (uint16_t i = 0; i < out->func_count; i++) {
         if (out->funcs[i].symbol < out->symbol_count) out->func_by_symbol[out->funcs[i].symbol] = &out->funcs[i];
     }
 
+    if (!splice_count_fits(out->symbol_count ? out->symbol_count : 1u, sizeof(Value))) return 0;
+    if (!splice_count_fits(out->symbol_count ? out->symbol_count : 1u, sizeof(uint8_t))) return 0;
+    size_t frame_slots = (size_t)(out->symbol_count ? out->symbol_count : 1u) * (size_t)VAR_STACK_MAX;
+    if (splice_mul_overflows_size((size_t)(out->symbol_count ? out->symbol_count : 1u), (size_t)VAR_STACK_MAX)) return 0;
+    if (!splice_count_fits(frame_slots, sizeof(Value))) return 0;
+    if (!splice_count_fits(frame_slots, sizeof(uint8_t))) return 0;
     out->global_values = (Value *)calloc(out->symbol_count ? out->symbol_count : 1, sizeof(Value));
     out->global_used = (uint8_t *)calloc(out->symbol_count ? out->symbol_count : 1, sizeof(uint8_t));
-    out->frame_values = (Value *)calloc((size_t)(out->symbol_count ? out->symbol_count : 1) * VAR_STACK_MAX, sizeof(Value));
-    out->frame_stamp = (uint8_t *)calloc((size_t)(out->symbol_count ? out->symbol_count : 1) * VAR_STACK_MAX, sizeof(uint8_t));
+    out->frame_values = (Value *)calloc(frame_slots, sizeof(Value));
+    out->frame_stamp = (uint8_t *)calloc(frame_slots, sizeof(uint8_t));
     if (!out->global_values || !out->global_used || !out->frame_values || !out->frame_stamp) return 0;
 
     out->code_size = rd_u32(data, size, &pos);
@@ -370,10 +446,11 @@ static Value call_builtin_or_native(const char *name, int argc, Value *argv) {
 
         size_t n = strlen(in);
         if (n > 0 && in[n - 1] == '\n') in[n - 1] = '\0';
+        n = strlen(in);
 
-        char *copy = (char *)malloc(strlen(in) + 1);
+        char *copy = (char *)malloc(n + 1);
         if (!copy) SPLICE_FAIL("OOM");
-        strcpy(copy, in);
+        memcpy(copy, in, n + 1);
         return value_string(copy);
     }
 
@@ -407,11 +484,7 @@ static Value call_builtin_or_native(const char *name, int argc, Value *argv) {
         ObjArray *oa = (ObjArray *)target.object;
         if (oa->type != OBJ_ARRAY) SPLICE_FAIL("APPEND_TARGET");
         if (oa->count >= oa->capacity) {
-            int newcap = oa->capacity ? oa->capacity * 2 : 4;
-            Value *ni = (Value *)realloc(oa->items, sizeof(Value) * (size_t)newcap);
-            if (!ni) SPLICE_FAIL("ARRAY_OOM");
-            oa->items = ni;
-            oa->capacity = newcap;
+            if (!splice_array_reserve(oa, (size_t)oa->count + 1u)) SPLICE_FAIL("ARRAY_OOM");
         }
         if (val.type == VAL_STRING) {
             Value copy = val;
@@ -534,10 +607,16 @@ static Value call_builtin_or_native(const char *name, int argc, Value *argv) {
         int count = end - start;
 
         ObjArray *oa = malloc(sizeof(ObjArray));
+        if (!oa) SPLICE_FAIL("ARRAY_OOM");
         oa->type = OBJ_ARRAY;
         oa->count = count;
         oa->capacity = count;
-        oa->items = malloc(sizeof(Value) * count);
+        if (count < 0 || !splice_array_capacity_valid((size_t)count) ||
+            !splice_count_fits((size_t)count, sizeof(Value))) {
+            SPLICE_FAIL("ARRAY_OOM");
+        }
+        oa->items = count > 0 ? malloc(sizeof(Value) * (size_t)count) : NULL;
+        if (count > 0 && !oa->items) SPLICE_FAIL("ARRAY_OOM");
 
         for (int i=0;i<count;i++)
             oa->items[i] = src->items[start+i];
@@ -552,18 +631,20 @@ static Value call_builtin_or_native(const char *name, int argc, Value *argv) {
         const char *sep = argv[1].string ? argv[1].string : "";
 
         ObjArray *oa = malloc(sizeof(ObjArray));
+        if (!oa) SPLICE_FAIL("ARRAY_OOM");
         oa->type = OBJ_ARRAY;
         oa->count = 0;
         oa->capacity = 8;
-        oa->items = malloc(sizeof(Value) * oa->capacity);
+        oa->items = malloc(sizeof(Value) * (size_t)oa->capacity);
+        if (!oa->items) SPLICE_FAIL("ARRAY_OOM");
 
         char *copy = strdup(str);
         char *tok = strtok(copy, sep);
 
         while (tok) {
-            if (oa->count >= oa->capacity) {
-                oa->capacity *= 2;
-                oa->items = realloc(oa->items,sizeof(Value)*oa->capacity);
+            if (oa->count >= oa->capacity && !splice_array_reserve(oa, (size_t)oa->count + 1u)) {
+                free(copy);
+                SPLICE_FAIL("ARRAY_OOM");
             }
 
             oa->items[oa->count++] = value_string(strdup(tok));
@@ -955,6 +1036,10 @@ static int splice_execute_bytecode(const unsigned char *data, size_t size) {
                 oa->type = OBJ_ARRAY;
                 oa->count = (int)count;
                 oa->capacity = count > 0 ? (int)count : 4;
+                if (!splice_array_capacity_valid((size_t)oa->capacity) ||
+                    !splice_count_fits((size_t)oa->capacity, sizeof(Value))) {
+                    SPLICE_FAIL("ARRAY_OOM");
+                }
                 oa->items = (Value *)malloc(sizeof(Value) * (size_t)oa->capacity);
                 if (!oa->items) SPLICE_FAIL("ARRAY_OOM");
                 for (int i = (int)count - 1; i >= 0; i--) oa->items[i] = vm_pop();
@@ -989,12 +1074,7 @@ static int splice_execute_bytecode(const unsigned char *data, size_t size) {
                 int idx = (int)idxv.number;
                 if (idx < 0) SPLICE_FAIL("INDEX_OOB");
                 if (idx >= oa->capacity) {
-                    int newcap = oa->capacity ? oa->capacity : 4;
-                    while (idx >= newcap) newcap *= 2;
-                    Value *ni = (Value *)realloc(oa->items, sizeof(Value) * (size_t)newcap);
-                    if (!ni) SPLICE_FAIL("ARRAY_OOM");
-                    oa->items = ni;
-                    oa->capacity = newcap;
+                    if (!splice_array_reserve(oa, (size_t)idx + 1u)) SPLICE_FAIL("ARRAY_OOM");
                 }
                 if (idx >= oa->count) {
                     for (int i = oa->count; i <= idx; i++) oa->items[i] = value_number(0.0);
