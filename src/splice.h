@@ -21,34 +21,6 @@
 #define SPLICE_FAIL(msg) do { fprintf(stderr, "%s\n", msg); exit(1); } while (0)
 #endif
 
-/* ================= ARENA ================= */
-
-static unsigned char *splice_arena = NULL;
-static size_t splice_arena_size = 0;
-static size_t splice_arena_pos = 0;
-
-static void arena_init(size_t size) {
-    splice_arena = (unsigned char *)malloc(size);
-    if (!splice_arena) SPLICE_FAIL("ARENA_ALLOC_FAIL");
-    splice_arena_size = size;
-    splice_arena_pos = 0;
-    memset(splice_arena, 0, size);
-}
-
-static void arena_free(void) {
-    free(splice_arena);
-    splice_arena = NULL;
-    splice_arena_size = splice_arena_pos = 0;
-}
-
-static void *arena_alloc(size_t n) {
-    n = (n + 7) & ~7;
-    if (splice_arena_pos + n > splice_arena_size) SPLICE_FAIL("ARENA_OOM");
-    void *p = splice_arena + splice_arena_pos;
-    splice_arena_pos += n;
-    return p;
-}
-
 /* ================= VALUES ================= */
 
 typedef enum { VAL_NUMBER, VAL_STRING, VAL_OBJECT } ValueType;
@@ -195,20 +167,6 @@ static Value value_number(double n) {
 static Value value_string(const char *s) {
     Value v = { VAL_STRING, 0.0, s, NULL };
     return v;
-}
-
-static void vm_push(Value v) {
-#ifndef NDEBUG
-    if (vm_sp >= VM_STACK_MAX) SPLICE_FAIL("STACK_OVERFLOW");
-#endif
-    vm_stack[vm_sp++] = v;
-}
-
-static Value vm_pop(void) {
-#ifndef NDEBUG
-    if (vm_sp <= 0) SPLICE_FAIL("STACK_UNDERFLOW");
-#endif
-    return vm_stack[--vm_sp];
 }
 
 static int value_truthy(Value v) {
@@ -620,27 +578,6 @@ static Value call_builtin_or_native(const char *name, int argc, Value *argv) {
     SpliceCFunc native = Splice_get_native(name);
     if (!native) SPLICE_FAIL("UNDEF_FUNC");
     return native(argc, argv);
-}
-
-static uint16_t fetch_u16(const BytecodeProgram *p) {
-#ifndef NDEBUG
-    if (vm_ip + 2 > p->code_size) SPLICE_FAIL("IP_OOB");
-#endif
-    uint16_t v = (uint16_t)p->code[vm_ip] | ((uint16_t)p->code[vm_ip + 1] << 8);
-    vm_ip += 2;
-    return v;
-}
-
-static uint32_t fetch_u32(const BytecodeProgram *p) {
-#ifndef NDEBUG
-    if (vm_ip + 4 > p->code_size) SPLICE_FAIL("IP_OOB");
-#endif
-    uint32_t v = (uint32_t)p->code[vm_ip] |
-                 ((uint32_t)p->code[vm_ip + 1] << 8) |
-                 ((uint32_t)p->code[vm_ip + 2] << 16) |
-                 ((uint32_t)p->code[vm_ip + 3] << 24);
-    vm_ip += 4;
-    return v;
 }
 
 static inline void vm_push_fast(int *sp, Value v) {

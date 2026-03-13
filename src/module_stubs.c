@@ -1,4 +1,3 @@
-#include "splice.h"
 #include "sdk.h"
 
 __attribute__((constructor))

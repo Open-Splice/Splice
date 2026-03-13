@@ -3,7 +3,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdarg.h>
 #include <limits.h>
 #include <unistd.h>
 #ifdef _WIN32
@@ -22,20 +21,6 @@
 
 #include "splice.h"
 #include "sdk.h"
-
-/* =========================
-   Logging helpers
-   ========================= */
-
-static void success(int ln, const char *fmt, ...) {
-    (void)ln;
-    va_list ap;
-    va_start(ap, fmt);
-    fprintf(stdout, "[OK] ");
-    vfprintf(stdout, fmt, ap);
-    fprintf(stdout, "\n");
-    va_end(ap);
-}
 
 /* =========================
    CLI VM entry
