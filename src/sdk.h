@@ -6,6 +6,12 @@
 #include <ctype.h>   // tolower, isspace
 #include <stdio.h>
 #include <limits.h>
+#if defined(ARDUINO) || defined(SPLICE_PLATFORM_ARDUINO)
+#define SPLICE_EMBED 1
+#else
+#define SPLICE_EMBED 0
+#endif
+
 #if !defined(_WIN32) && !defined(__MINGW32__) && !defined(__MINGW64__) && !defined(__CYGWIN__)
 #define SPLICE_HAS_POSIX_NATIVE_MODULES 1
 #include <dlfcn.h>
@@ -13,11 +19,6 @@
 #include <unistd.h>
 #else
 #define SPLICE_HAS_POSIX_NATIVE_MODULES 0
-#endif
-#ifdef ARDUINO
-  #define SPLICE_EMBED 1
-#else
-  #define SPLICE_EMBED 0
 #endif
 
 

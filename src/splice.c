@@ -1,5 +1,19 @@
 #define SPLICE_NO_INLINE_MEMREADER
 
+#include "splice.h"
+#include "sdk.h"
+
+#if SPLICE_EMBED
+
+int splice_run_embedded_program(const unsigned char *data, size_t size) {
+    if (!data || size == 0) {
+        return 0;
+    }
+    return splice_execute_bytecode(data, size);
+}
+
+#else
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,9 +32,6 @@
 #else
 #define splice_getcwd getcwd
 #endif
-
-#include "splice.h"
-#include "sdk.h"
 
 /* =========================
    CLI VM entry
@@ -141,3 +152,5 @@ int main(int argc, char **argv) {
 
     return 0;
 }
+
+#endif

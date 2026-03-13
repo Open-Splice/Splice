@@ -1,22 +1,77 @@
 #ifndef SPLICE_H
 #define SPLICE_H
 
+#if defined(ARDUINO) || defined(SPLICE_PLATFORM_ARDUINO)
+#define SPLICE_EMBED 1
+#else
+#define SPLICE_EMBED 0
+#endif
+
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <limits.h>
 #include <math.h>
-#ifdef _WIN32
+#if defined(ARDUINO)
+#include <Arduino.h>
+#elif defined(_WIN32)
 #include <windows.h>
 #else
 #include <unistd.h>
 #endif
 
-#if defined(SPLICE_PLATFORM_ARDUINO)
-#include <Arduino.h>
-#define SPLICE_PRINTLN(s) Serial.println(s)
-#define SPLICE_FAIL(msg) do { Serial.println(msg); while (1) delay(1000); } while (0)
+#if SPLICE_EMBED
+#ifndef SPLICE_EMBED_PRINT
+#if defined(ARDUINO) && defined(__cplusplus)
+#define SPLICE_EMBED_PRINT(s) Serial.print(s)
+#else
+#define SPLICE_EMBED_PRINT(s) ((void)(s))
+#endif
+#endif
+
+#ifndef SPLICE_EMBED_PRINTLN
+#if defined(ARDUINO) && defined(__cplusplus)
+#define SPLICE_EMBED_PRINTLN(s) Serial.println(s)
+#else
+#define SPLICE_EMBED_PRINTLN(s) ((void)(s))
+#endif
+#endif
+
+#ifndef SPLICE_EMBED_DELAY_MS
+#if defined(ARDUINO)
+#define SPLICE_EMBED_DELAY_MS(ms) delay((unsigned long)(ms))
+#else
+#define SPLICE_EMBED_DELAY_MS(ms) ((void)(ms))
+#endif
+#endif
+
+#ifndef SPLICE_EMBED_INPUT_AVAILABLE
+#if defined(ARDUINO) && defined(__cplusplus)
+#define SPLICE_EMBED_INPUT_AVAILABLE() Serial.available()
+#else
+#define SPLICE_EMBED_INPUT_AVAILABLE() 0
+#endif
+#endif
+
+#ifndef SPLICE_EMBED_INPUT_READ
+#if defined(ARDUINO) && defined(__cplusplus)
+#define SPLICE_EMBED_INPUT_READ() Serial.read()
+#else
+#define SPLICE_EMBED_INPUT_READ() (-1)
+#endif
+#endif
+
+#ifndef SPLICE_EMBED_HAS_INPUT
+#if defined(ARDUINO) && defined(__cplusplus)
+#define SPLICE_EMBED_HAS_INPUT 1
+#else
+#define SPLICE_EMBED_HAS_INPUT 0
+#endif
+#endif
+
+#define SPLICE_PRINTLN(s) SPLICE_EMBED_PRINTLN(s)
+#define SPLICE_FAIL(msg) do { SPLICE_EMBED_PRINTLN(msg); while (1) SPLICE_EMBED_DELAY_MS(1000); } while (0)
 #else
 #define SPLICE_PRINTLN(s) puts(s)
 #define SPLICE_FAIL(msg) do { fprintf(stderr, "%s\n", msg); exit(1); } while (0)
@@ -42,12 +97,21 @@
 #define SPLICE_MAX_ARRAY_CAPACITY 1048576u
 #endif
 
+#ifndef SPLICE_MAX_ALLOC_SIZE
+#define SPLICE_MAX_ALLOC_SIZE (16u * 1024u * 1024u)
+#endif
+
 static int splice_mul_overflows_size(size_t a, size_t b) {
     return a != 0 && b > SIZE_MAX / a;
 }
 
 static int splice_count_fits(size_t count, size_t elem_size) {
     return !splice_mul_overflows_size(count, elem_size);
+}
+
+static int splice_allocation_fits(size_t count, size_t elem_size) {
+    if (!splice_count_fits(count, elem_size)) return 0;
+    return count * elem_size <= (size_t)SPLICE_MAX_ALLOC_SIZE;
 }
 
 static int splice_array_capacity_valid(size_t capacity) {
@@ -96,7 +160,7 @@ static int splice_array_reserve(ObjArray *oa, size_t min_capacity) {
             newcap *= 2u;
         }
     }
-    if (newcap < min_capacity || !splice_count_fits(newcap, sizeof(Value))) return 0;
+    if (newcap < min_capacity || !splice_allocation_fits(newcap, sizeof(Value))) return 0;
 
     Value *ni = (Value *)realloc(oa->items, sizeof(Value) * newcap);
     if (!ni) return 0;
@@ -209,6 +273,8 @@ typedef struct {
 typedef struct {
     uint32_t return_ip;
 } CallFrame;
+
+int splice_run_embedded_program(const unsigned char *data, size_t size);
 
 static Value vm_stack[VM_STACK_MAX];
 static int vm_sp = 0;
@@ -341,9 +407,11 @@ static int load_program(const unsigned char *data, size_t size, BytecodeProgram 
     size_t pos = 5;
 
     out->const_count = rd_u16(data, size, &pos);
+    size_t const_capacity = out->const_count ? (size_t)out->const_count : 1u;
     if (out->const_count > SPLICE_MAX_CONST_COUNT) return 0;
-    if (!splice_count_fits(out->const_count ? out->const_count : 1u, sizeof(Constant))) return 0;
-    out->consts = (Constant *)calloc(out->const_count ? out->const_count : 1, sizeof(Constant));
+    if (!splice_array_capacity_valid(const_capacity)) return 0;
+    if (!splice_allocation_fits(const_capacity, sizeof(Constant))) return 0;
+    out->consts = (Constant *)calloc(const_capacity, sizeof(Constant));
     if (!out->consts) return 0;
     for (uint16_t i = 0; i < out->const_count; i++) {
         out->consts[i].type = rd_u8(data, size, &pos);
@@ -357,18 +425,22 @@ static int load_program(const unsigned char *data, size_t size, BytecodeProgram 
     }
 
     out->symbol_count = rd_u16(data, size, &pos);
+    size_t symbol_capacity = out->symbol_count ? (size_t)out->symbol_count : 1u;
     if (out->symbol_count > SPLICE_MAX_SYMBOL_COUNT) return 0;
-    if (!splice_count_fits(out->symbol_count ? out->symbol_count : 1u, sizeof(char *))) return 0;
-    out->symbols = (const char **)calloc(out->symbol_count ? out->symbol_count : 1, sizeof(char *));
+    if (!splice_array_capacity_valid(symbol_capacity)) return 0;
+    if (!splice_allocation_fits(symbol_capacity, sizeof(char *))) return 0;
+    out->symbols = (const char **)calloc(symbol_capacity, sizeof(char *));
     if (!out->symbols) return 0;
     for (uint16_t i = 0; i < out->symbol_count; i++) {
         out->symbols[i] = rd_str(data, size, &pos);
     }
 
     out->func_count = rd_u16(data, size, &pos);
+    size_t func_capacity = out->func_count ? (size_t)out->func_count : 1u;
     if (out->func_count > SPLICE_MAX_FUNC_COUNT) return 0;
-    if (!splice_count_fits(out->func_count ? out->func_count : 1u, sizeof(FunctionEntry))) return 0;
-    out->funcs = (FunctionEntry *)calloc(out->func_count ? out->func_count : 1, sizeof(FunctionEntry));
+    if (!splice_array_capacity_valid(func_capacity)) return 0;
+    if (!splice_allocation_fits(func_capacity, sizeof(FunctionEntry))) return 0;
+    out->funcs = (FunctionEntry *)calloc(func_capacity, sizeof(FunctionEntry));
     if (!out->funcs) return 0;
     for (uint16_t i = 0; i < out->func_count; i++) {
         out->funcs[i].symbol = rd_u16(data, size, &pos);
@@ -376,8 +448,10 @@ static int load_program(const unsigned char *data, size_t size, BytecodeProgram 
         if (out->funcs[i].param_count > SPLICE_MAX_PARAM_COUNT) return 0;
         out->funcs[i].addr = rd_u32(data, size, &pos);
         if (out->funcs[i].param_count > 0) {
-            if (!splice_count_fits(out->funcs[i].param_count, sizeof(uint16_t))) return 0;
-            out->funcs[i].params = (uint16_t *)calloc(out->funcs[i].param_count, sizeof(uint16_t));
+            size_t param_capacity = (size_t)out->funcs[i].param_count;
+            if (!splice_array_capacity_valid(param_capacity)) return 0;
+            if (!splice_allocation_fits(param_capacity, sizeof(uint16_t))) return 0;
+            out->funcs[i].params = (uint16_t *)calloc(param_capacity, sizeof(uint16_t));
             if (!out->funcs[i].params) return 0;
             for (uint16_t j = 0; j < out->funcs[i].param_count; j++) {
                 out->funcs[i].params[j] = rd_u16(data, size, &pos);
@@ -385,21 +459,21 @@ static int load_program(const unsigned char *data, size_t size, BytecodeProgram 
         }
     }
 
-    if (!splice_count_fits(out->symbol_count ? out->symbol_count : 1u, sizeof(FunctionEntry *))) return 0;
-    out->func_by_symbol = (FunctionEntry **)calloc(out->symbol_count ? out->symbol_count : 1, sizeof(FunctionEntry *));
+    if (!splice_allocation_fits(symbol_capacity, sizeof(FunctionEntry *))) return 0;
+    out->func_by_symbol = (FunctionEntry **)calloc(symbol_capacity, sizeof(FunctionEntry *));
     if (!out->func_by_symbol) return 0;
     for (uint16_t i = 0; i < out->func_count; i++) {
         if (out->funcs[i].symbol < out->symbol_count) out->func_by_symbol[out->funcs[i].symbol] = &out->funcs[i];
     }
 
-    if (!splice_count_fits(out->symbol_count ? out->symbol_count : 1u, sizeof(Value))) return 0;
-    if (!splice_count_fits(out->symbol_count ? out->symbol_count : 1u, sizeof(uint8_t))) return 0;
-    size_t frame_slots = (size_t)(out->symbol_count ? out->symbol_count : 1u) * (size_t)VAR_STACK_MAX;
-    if (splice_mul_overflows_size((size_t)(out->symbol_count ? out->symbol_count : 1u), (size_t)VAR_STACK_MAX)) return 0;
-    if (!splice_count_fits(frame_slots, sizeof(Value))) return 0;
-    if (!splice_count_fits(frame_slots, sizeof(uint8_t))) return 0;
-    out->global_values = (Value *)calloc(out->symbol_count ? out->symbol_count : 1, sizeof(Value));
-    out->global_used = (uint8_t *)calloc(out->symbol_count ? out->symbol_count : 1, sizeof(uint8_t));
+    if (!splice_allocation_fits(symbol_capacity, sizeof(Value))) return 0;
+    if (!splice_allocation_fits(symbol_capacity, sizeof(uint8_t))) return 0;
+    if (splice_mul_overflows_size(symbol_capacity, (size_t)VAR_STACK_MAX)) return 0;
+    size_t frame_slots = symbol_capacity * (size_t)VAR_STACK_MAX;
+    if (!splice_allocation_fits(frame_slots, sizeof(Value))) return 0;
+    if (!splice_allocation_fits(frame_slots, sizeof(uint8_t))) return 0;
+    out->global_values = (Value *)calloc(symbol_capacity, sizeof(Value));
+    out->global_used = (uint8_t *)calloc(symbol_capacity, sizeof(uint8_t));
     out->frame_values = (Value *)calloc(frame_slots, sizeof(Value));
     out->frame_stamp = (uint8_t *)calloc(frame_slots, sizeof(uint8_t));
     if (!out->global_values || !out->global_used || !out->frame_values || !out->frame_stamp) return 0;
@@ -418,7 +492,9 @@ static inline FunctionEntry *find_function(const BytecodeProgram *p, uint16_t sy
 }
 
 static Value call_builtin_or_native(const char *name, int argc, Value *argv) {
-#ifdef _WIN32
+#if SPLICE_EMBED
+#define splice_sleep_ms(ms) SPLICE_EMBED_DELAY_MS(ms)
+#elif defined(_WIN32)
 #define splice_sleep_ms(ms) Sleep((DWORD)(ms))
 #else
 #define splice_sleep_ms(ms) usleep((useconds_t)((ms) * 1000))
@@ -432,21 +508,51 @@ static Value call_builtin_or_native(const char *name, int argc, Value *argv) {
     if (strcmp(name, "input") == 0) {
         if (argc > 0) {
             if (argv[0].type == VAL_STRING) {
+#if SPLICE_EMBED
+                SPLICE_EMBED_PRINT(argv[0].string ? argv[0].string : "");
+#else
                 fputs(argv[0].string ? argv[0].string : "", stdout);
+#endif
             } else {
                 char pbuf[64];
                 snprintf(pbuf, sizeof(pbuf), "%g", argv[0].number);
+#if SPLICE_EMBED
+                SPLICE_EMBED_PRINT(pbuf);
+#else
                 fputs(pbuf, stdout);
+#endif
             }
+#if !SPLICE_EMBED
             fflush(stdout);
+#endif
         }
 
+#if SPLICE_EMBED
+        char in[128];
+        size_t n = 0;
+#if !SPLICE_EMBED_HAS_INPUT
+        in[0] = '\0';
+#else
+        while (n + 1 < sizeof(in)) {
+            while (!SPLICE_EMBED_INPUT_AVAILABLE()) {
+                SPLICE_EMBED_DELAY_MS(1);
+            }
+            int ch = SPLICE_EMBED_INPUT_READ();
+            if (ch < 0) continue;
+            if (ch == '\r') continue;
+            if (ch == '\n') break;
+            in[n++] = (char)ch;
+        }
+        in[n] = '\0';
+#endif
+#else
         char in[512];
         if (!fgets(in, sizeof(in), stdin)) return value_string("");
 
         size_t n = strlen(in);
         if (n > 0 && in[n - 1] == '\n') in[n - 1] = '\0';
         n = strlen(in);
+#endif
 
         char *copy = (char *)malloc(n + 1);
         if (!copy) SPLICE_FAIL("OOM");
@@ -1031,16 +1137,17 @@ static int splice_execute_bytecode(const unsigned char *data, size_t size) {
 
             case OP_ARRAY_NEW: {
                 uint16_t count = fetch_u16(&prog);
+                size_t array_capacity = count > 0 ? (size_t)count : 4u;
                 ObjArray *oa = (ObjArray *)malloc(sizeof(ObjArray));
                 if (!oa) SPLICE_FAIL("ARRAY_OOM");
                 oa->type = OBJ_ARRAY;
                 oa->count = (int)count;
-                oa->capacity = count > 0 ? (int)count : 4;
-                if (!splice_array_capacity_valid((size_t)oa->capacity) ||
-                    !splice_count_fits((size_t)oa->capacity, sizeof(Value))) {
+                oa->capacity = (int)array_capacity;
+                if (!splice_array_capacity_valid(array_capacity) ||
+                    !splice_allocation_fits(array_capacity, sizeof(Value))) {
                     SPLICE_FAIL("ARRAY_OOM");
                 }
-                oa->items = (Value *)malloc(sizeof(Value) * (size_t)oa->capacity);
+                oa->items = (Value *)malloc(sizeof(Value) * array_capacity);
                 if (!oa->items) SPLICE_FAIL("ARRAY_OOM");
                 for (int i = (int)count - 1; i >= 0; i--) oa->items[i] = vm_pop();
                 Value arr = { VAL_OBJECT, 0.0, NULL, oa };
