@@ -6,10 +6,13 @@
 #include <ctype.h>   // tolower, isspace
 #include <stdio.h>
 #include <limits.h>
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__MINGW32__) && !defined(__MINGW64__) && !defined(__CYGWIN__)
+#define SPLICE_HAS_POSIX_NATIVE_MODULES 1
 #include <dlfcn.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#else
+#define SPLICE_HAS_POSIX_NATIVE_MODULES 0
 #endif
 #ifdef ARDUINO
   #define SPLICE_EMBED 1
@@ -113,6 +116,7 @@ int Splice_native_func_count = 0;
 SpliceModuleInit Splice_modules[MAX_MODULES];
 int Splice_module_count = 0;
 
+#if SPLICE_HAS_POSIX_NATIVE_MODULES
 #define MAX_DYNAMIC_MODULES 16
 static char *Splice_dynamic_module_sources[MAX_DYNAMIC_MODULES];
 static void *Splice_dynamic_module_handles[MAX_DYNAMIC_MODULES];
@@ -160,9 +164,10 @@ static int Splice_try_compile_module(const char *include_dir, const char *resolv
     if (waitpid(pid, &status, 0) < 0) return 0;
     return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
+#endif
 
 int Splice_load_c_module_source(const char *src_path) {
-#ifdef _WIN32
+#if !SPLICE_HAS_POSIX_NATIVE_MODULES
     (void)src_path;
     return 0;
 #else
