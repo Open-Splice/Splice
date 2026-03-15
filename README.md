@@ -11,8 +11,6 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/Open-Splice/Splice/main.yml?branch=main&label=Splice%20CI%2FCD&logo=github&style=plastic)](https://github.com/Open-Splice/Splice/actions/workflows/main.yml)
 <!-- Copy-paste in your Readme.md file -->
 
-
-
 <!-- Made with [OSS Insight](https://ossinsight.io/) -->
 [![Live on GitBook](https://img.shields.io/badge/Live%20on-Gitbook-black.svg?style=plastic&logo=gitbook&logoColor=white)](https://sinha.gitbook.io/splice)
 
@@ -22,9 +20,11 @@
 
 [![CodeQL](https://github.com/Open-Splice/Splice/actions/workflows/codeql.yml/badge.svg)](https://github.com/Open-Splice/Splice/actions/workflows/codeql.yml)
 
-# The Splice Programming Language
+[Research Paper](https://zenodo.org/records/18914440)
 
-Splice is an Open-Source, high-level, Dynamic Programming language developed by Open-Splice, A Sinha Group organisation, to make writing code for embedded systems easier. This is the main Github repo where all source code of Splice remains. Installation of Splice can be found below.
+# **Introducing Splice - a new programming language designed for embedded systems and small devices!**
+
+Splice is an Open-Source, high-level, Dynamic Programming language developed by Open-Splice, A Sinha Group organization, to make writing code for embedded systems easier. This is the main Github repo where all source code of Splice remains. Installation of Splice can be found below.
 
 ## Whats in the world
 

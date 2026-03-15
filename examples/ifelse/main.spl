@@ -1,9 +1,11 @@
-let a = true;
-let b = false;
-if (a && !b) {
-    print("a and not b");
-} else if (a && b) {
+let a = "false";
+let b = "false";
+if (a == b) {
     print("a and b");
+} else if (a != b) {
+    print("a and not b");
 } else {
     print("neither");
 }
+let a = "true"
+let b = "false"
