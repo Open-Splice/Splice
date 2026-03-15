@@ -26,24 +26,69 @@
 
 Splice is an Open-Source, high-level, Dynamic Programming language developed by Open-Splice, A Sinha Group organization, to make writing code for embedded systems easier. This is the main Github repo where all source code of Splice remains. Installation of Splice can be found below.
 
-## Whats in the world
+## Core Benefits of Splice
 
-Programming embedded systems today is dominated by **C and C++**, which offer excellent performance but come with a steep learning curve and complex memory management.
+Splice is designed around the ideas outlined in `Splice.pdf`: a language and VM that remain portable, compact, predictable, and maintainable enough to fit embedded and system-adjacent use cases.
 
-Higher-level languages such as Lua aim to simplify development, but VM complexity and bytecode handling can become challenging on constrained systems.
+### 1. Write Once, Run Anywhere
 
-Splice explores an alternative design that prioritizes **clarity, simplicity, and inspectable execution** while remaining suitable for embedded environments.
+Splice aims for real portability across supported targets so behavior stays consistent instead of depending on platform-specific runtime quirks.
 
-## Why Splice
+### 2. Small Runtime Footprint
 
-Splice is designed to:
+The runtime is intended to stay compact, making Splice a better fit for constrained systems where memory and storage matter.
 
-- Reduce VM complexity
-- Keep execution transparent and debuggable
-- Maintain a small, understandable core
-- Make embedded-focused language tooling easier to reason about
+### 3. Predictable Execution
 
-This project is **early-stage and experimental**, focused on validating design decisions before expanding features.
+Execution is designed to be easier to follow and reason about, which helps when debugging, profiling, or validating behavior on small devices.
+
+### 4. C-Level Integration
+
+Splice is built with low-level host integration in mind so it can work alongside existing systems code instead of requiring a completely isolated runtime model.
+
+### 5. Fast Startup
+
+A smaller runtime and simpler execution model support quicker startup, which is useful for tooling, embedded tasks, and short-lived processes.
+
+### 6. Custom Bytecode
+
+Splice uses its own bytecode approach so the VM and language can be shaped together around clarity and control instead of inheriting a heavier generic model.
+
+### 7. Minimal Dependency Chain
+
+The design tries to keep the toolchain understandable and lightweight, which reduces friction when building, porting, or embedding the project.
+
+### 8. Explicit Language Design
+
+Splice favors explicit architecture choices so the behavior of the language and VM is easier to inspect, document, and maintain over time.
+
+### 9. Embeddable VM Architecture
+
+The VM is meant to be embeddable, allowing Splice to fit into larger host applications and device-oriented environments.
+
+### 10. Customizable Memory Model
+
+Different targets need different tradeoffs, so the design leaves room for memory handling choices that better match constrained hardware.
+
+### 11. Stable Cross-Platform Behavior
+
+Consistency across platforms is a core goal so the same program model can remain reliable as Splice expands to more targets.
+
+### 12. Language and Toolchain Control
+
+Owning both the language design and runtime model gives the project tighter control over how code is represented, executed, and debugged.
+
+### 13. Good Fit for System-Adjacent Software
+
+Splice is aimed at software that lives close to the system, where visibility into execution and runtime behavior matters.
+
+### 14. Low Cognitive Overhead
+
+The project emphasizes readable internals and a smaller conceptual surface area so developers can understand what the runtime is doing without digging through unnecessary complexity.
+
+### 15. Long-Term Maintainability
+
+The broader design goal is not just performance on day one, but a runtime and language model that can remain understandable and maintainable as the project evolves.
 
 ## How does Splice work?
 
@@ -56,9 +101,21 @@ Instead, it uses **KAB (Keyword Assigned Bytecode)**:
 - The VM directly interprets these semantic instructions
 - This simplifies debugging and tooling around bytecode
 
-This design reduces interpreter complexity and makes the bytecode easier to inspect and understand.
+This design reduces interpreter complexity and makes the bytecode easier to inspect, debug, and maintain across platforms.
 
 The current SPVM runtime has been tested on desktop platforms and is designed with microcontrollers such as the **ESP32** in mind.
+
+Splice Source Code
+↓
+Lexer
+↓
+Parser (AST)
+↓
+Bytecode Builder
+↓
+Stack Virtual Machine
+↓
+Execution
 
 ## How to Install?
 
