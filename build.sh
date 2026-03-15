@@ -208,7 +208,7 @@ EOF
 echo "Building Splice runtime and native module..."
 "$CC" "${COMMON_WARN[@]}" "${COMMON_DEFS[@]}" "${COMMON_OPT[@]}" "${COMMON_INCLUDES[@]}" -DSDK_IMPLEMENTATION -c "$RUNTIME_WRAPPER" -o "$BIN_DIR/Splice.o"
 "$CC" "${COMMON_WARN[@]}" "${COMMON_DEFS[@]}" "${COMMON_OPT[@]}" "${COMMON_INCLUDES[@]}" -c src/module_stubs.c -o "$BIN_DIR/module_stubs.o"
-"$CC" "${LINK_EXPORT_FLAGS[@]}" "${LINK_FLAGS[@]}" "$BIN_DIR/Splice.o" "$BIN_DIR/module_stubs.o" "${MATH_LIBS[@]}" -o "$BIN_DIR/Splice"
+"$CC" "${LINK_EXPORT_FLAGS[@]}" "${LINK_FLAGS[@]}" "$BIN_DIR/Splice.o" "$BIN_DIR/module_stubs.o" ${MATH_LIBS[@]-} -o "$BIN_DIR/Splice"
 
 echo "Building spbuild (bytecode compiler)..."
 "$CC" "${COMMON_WARN[@]}" "${COMMON_DEFS[@]}" "${COMMON_OPT[@]}" "${COMMON_INCLUDES[@]}" \
@@ -218,7 +218,7 @@ echo "Building spbuild (bytecode compiler)..."
     src/build/parser.c \
     src/build/optimizer.c \
     src/build/codegen.c \
-    "${MATH_LIBS[@]}" \
+    ${MATH_LIBS[@]-} \
     "${LINK_FLAGS[@]}" \
     -o "$BIN_DIR/spbuild"
 
