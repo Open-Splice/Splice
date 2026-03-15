@@ -20,7 +20,7 @@
 
 [![CodeQL](https://github.com/Open-Splice/Splice/actions/workflows/codeql.yml/badge.svg)](https://github.com/Open-Splice/Splice/actions/workflows/codeql.yml)
 
-[Research Paper](https://zenodo.org/records/18914440)
+
 
 # **Introducing Splice - a new programming language designed for embedded systems and small devices!**
 
