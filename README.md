@@ -20,8 +20,6 @@
 
 [![CodeQL](https://github.com/Open-Splice/Splice/actions/workflows/codeql.yml/badge.svg)](https://github.com/Open-Splice/Splice/actions/workflows/codeql.yml)
 
-
-
 # **Introducing Splice - a new programming language designed for embedded systems and small devices!**
 
 Splice is an Open-Source, high-level, Dynamic Programming language developed by Open-Splice, A Sinha Group organization, to make writing code for embedded systems easier. This is the main Github repo where all source code of Splice remains. Installation of Splice can be found below.
@@ -105,17 +103,19 @@ This design reduces interpreter complexity and makes the bytecode easier to insp
 
 The current SPVM runtime has been tested on desktop platforms and is designed with microcontrollers such as the **ESP32** in mind.
 
-Splice Source Code
-↓
-Lexer
-↓
-Parser (AST)
-↓
-Bytecode Builder
-↓
-Stack Virtual Machine
-↓
+``` text
+Splice Source Code 
+↓ 
+Lexer 
+↓ 
+Parser (AST) 
+↓ 
+Bytecode Builder 
+↓ 
+Stack Virtual Machine 
+↓ 
 Execution
+```
 
 ## How to Install?
 
