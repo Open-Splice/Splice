@@ -12,7 +12,7 @@
 #define SPLICE_EMBED 0
 #endif
 
-#if !defined(_WIN32) && !defined(__MINGW32__) && !defined(__MINGW64__) && !defined(__CYGWIN__)
+#if !SPLICE_EMBED && !defined(_WIN32) && !defined(__MINGW32__) && !defined(__MINGW64__) && !defined(__CYGWIN__)
 #define SPLICE_HAS_POSIX_NATIVE_MODULES 1
 #include <dlfcn.h>
 #include <sys/wait.h>

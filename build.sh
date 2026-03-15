@@ -20,10 +20,10 @@ echo "Proceeding with build on $OS/$ARCH..."
 echo "Building Splice runtime and native module..."
 
 # Compile Splice runtime (with SDK globals)
-gcc -DSDK_IMPLEMENTATION -Isrc -Wall -Wextra -c -Ofast -march=native -mtune=native -flto -fomit-frame-pointer -funroll-loops -fno-semantic-interposition -fno-math-errno -fno-trapping-math -fstrict-aliasing -DNDEBUG src/splice.c -o "$BIN_DIR/Splice.o"
+gcc -DSDK_IMPLEMENTATION -O3 -Isrc -Wall -Wextra -c -Ofast -march=native -mtune=native -flto -fomit-frame-pointer -funroll-loops -fno-semantic-interposition -fno-math-errno -fno-trapping-math -fstrict-aliasing -DNDEBUG src/splice.c -o "$BIN_DIR/Splice.o"
 
 # Compile native module without SDK_IMPLEMENTATION
-gcc -Isrc -Wall -Wextra -c -Ofast -march=native -mtune=native -flto -fomit-frame-pointer -funroll-loops -fno-semantic-interposition -fno-math-errno -fno-trapping-math -fstrict-aliasing -DNDEBUG src/module_stubs.c -o "$BIN_DIR/module_stubs.o"
+gcc -O3 -Isrc -Wall -Wextra -c -Ofast -march=native -mtune=native -flto -fomit-frame-pointer -funroll-loops -fno-semantic-interposition -fno-math-errno -fno-trapping-math -fstrict-aliasing -DNDEBUG src/module_stubs.c -o "$BIN_DIR/module_stubs.o"
 
 # Export runtime symbols so dynamically loaded native modules can resolve sdk globals.
 LINK_EXPORT_FLAGS=""

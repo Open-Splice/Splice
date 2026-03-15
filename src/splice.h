@@ -20,54 +20,42 @@
 #else
 #include <unistd.h>
 #endif
+#if defined(SPLICE_PLATFORM_WASM)
 
-#if SPLICE_EMBED
-#ifndef SPLICE_EMBED_PRINT
-#if defined(ARDUINO) && defined(__cplusplus)
-#define SPLICE_EMBED_PRINT(s) Serial.print(s)
-#else
-#define SPLICE_EMBED_PRINT(s) ((void)(s))
+extern void splice_wasm_print(const char*);
+
+#define SPLICE_PRINTLN(s) splice_wasm_print(s)
+
 #endif
+#if SPLICE_EMBED
+void splice_embed_print(const char *s);
+void splice_embed_println(const char *s);
+void splice_embed_delay_ms(unsigned long ms);
+int splice_embed_input_available(void);
+int splice_embed_input_read(void);
+
+#ifndef SPLICE_EMBED_PRINT
+#define SPLICE_EMBED_PRINT(s) splice_embed_print(s)
 #endif
 
 #ifndef SPLICE_EMBED_PRINTLN
-#if defined(ARDUINO) && defined(__cplusplus)
-#define SPLICE_EMBED_PRINTLN(s) Serial.println(s)
-#else
-#define SPLICE_EMBED_PRINTLN(s) ((void)(s))
-#endif
+#define SPLICE_EMBED_PRINTLN(s) splice_embed_println(s)
 #endif
 
 #ifndef SPLICE_EMBED_DELAY_MS
-#if defined(ARDUINO)
-#define SPLICE_EMBED_DELAY_MS(ms) delay((unsigned long)(ms))
-#else
-#define SPLICE_EMBED_DELAY_MS(ms) ((void)(ms))
-#endif
+#define SPLICE_EMBED_DELAY_MS(ms) splice_embed_delay_ms((unsigned long)(ms))
 #endif
 
 #ifndef SPLICE_EMBED_INPUT_AVAILABLE
-#if defined(ARDUINO) && defined(__cplusplus)
-#define SPLICE_EMBED_INPUT_AVAILABLE() Serial.available()
-#else
-#define SPLICE_EMBED_INPUT_AVAILABLE() 0
-#endif
+#define SPLICE_EMBED_INPUT_AVAILABLE() splice_embed_input_available()
 #endif
 
 #ifndef SPLICE_EMBED_INPUT_READ
-#if defined(ARDUINO) && defined(__cplusplus)
-#define SPLICE_EMBED_INPUT_READ() Serial.read()
-#else
-#define SPLICE_EMBED_INPUT_READ() (-1)
-#endif
+#define SPLICE_EMBED_INPUT_READ() splice_embed_input_read()
 #endif
 
 #ifndef SPLICE_EMBED_HAS_INPUT
-#if defined(ARDUINO) && defined(__cplusplus)
 #define SPLICE_EMBED_HAS_INPUT 1
-#else
-#define SPLICE_EMBED_HAS_INPUT 0
-#endif
 #endif
 
 #define SPLICE_PRINTLN(s) SPLICE_EMBED_PRINTLN(s)
@@ -731,7 +719,7 @@ static Value call_builtin_or_native(const char *name, int argc, Value *argv) {
 
         int count = end - start;
 
-        ObjArray *oa = malloc(sizeof(ObjArray));
+        ObjArray *oa = (ObjArray *)malloc(sizeof(ObjArray));
         if (!oa) SPLICE_FAIL("ARRAY_OOM");
         oa->type = OBJ_ARRAY;
         oa->count = count;
@@ -740,7 +728,7 @@ static Value call_builtin_or_native(const char *name, int argc, Value *argv) {
             !splice_count_fits((size_t)count, sizeof(Value))) {
             SPLICE_FAIL("ARRAY_OOM");
         }
-        oa->items = count > 0 ? malloc(sizeof(Value) * (size_t)count) : NULL;
+        oa->items = count > 0 ? (Value *)malloc(sizeof(Value) * (size_t)count) : NULL;
         if (count > 0 && !oa->items) SPLICE_FAIL("ARRAY_OOM");
 
         for (int i=0;i<count;i++)
@@ -755,12 +743,12 @@ static Value call_builtin_or_native(const char *name, int argc, Value *argv) {
         const char *str = argv[0].string ? argv[0].string : "";
         const char *sep = argv[1].string ? argv[1].string : "";
 
-        ObjArray *oa = malloc(sizeof(ObjArray));
+        ObjArray *oa = (ObjArray *)malloc(sizeof(ObjArray));
         if (!oa) SPLICE_FAIL("ARRAY_OOM");
         oa->type = OBJ_ARRAY;
         oa->count = 0;
         oa->capacity = 8;
-        oa->items = malloc(sizeof(Value) * (size_t)oa->capacity);
+        oa->items = (Value *)malloc(sizeof(Value) * (size_t)oa->capacity);
         if (!oa->items) SPLICE_FAIL("ARRAY_OOM");
 
         char *copy = strdup(str);
