@@ -12,7 +12,7 @@
 <!-- Copy-paste in your Readme.md file -->
 
 <!-- Made with [OSS Insight](https://ossinsight.io/) -->
-[![Live on GitBook](https://img.shields.io/badge/Live%20on-Gitbook-black.svg?style=plastic&logo=gitbook&logoColor=white)](https://sinha.gitbook.io/splice)
+[![Built with Material for MkDocs](https://img.shields.io/badge/Docs_Here-526CFE?style=for-the-badge&logo=MaterialForMkDocs&logoColor=white)](https://open-splice.github.io/SpliceDocs/)
 
 [![Reddit](https://img.shields.io/badge/On-Reddit-%23FF4500.svg?style=plastic&logo=Reddit&logoColor=white)](https://www.reddit.com/r/OpenSplice/)
 
